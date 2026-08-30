@@ -2,7 +2,11 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const crypto = require("crypto");
+const { sendPasswordResetEmail } = require("../services/emailService");
 
+// ==============================
+// REGISTER USER
+// ==============================
 const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -14,7 +18,11 @@ const registerUser = async (req, res) => {
       });
     }
 
-    const existingUser = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (existingUser) {
       return res.status(409).json({
@@ -26,13 +34,12 @@ const registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
-  name,
-  email,
-  password: hashedPassword,
-});
+      name: name.trim(),
+      email: normalizedEmail,
+      password: hashedPassword,
+    });
 
-
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "User registered successfully",
       user: {
@@ -44,13 +51,16 @@ const registerUser = async (req, res) => {
   } catch (error) {
     console.error("Registration error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error during registration",
     });
   }
 };
 
+// ==============================
+// LOGIN USER
+// ==============================
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -62,7 +72,11 @@ const loginUser = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
 
     if (!user) {
       return res.status(401).json({
@@ -71,7 +85,10 @@ const loginUser = async (req, res) => {
       });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcrypt.compare(
+      password,
+      user.password
+    );
 
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -90,7 +107,7 @@ const loginUser = async (req, res) => {
       }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Login successful",
       token,
@@ -103,13 +120,16 @@ const loginUser = async (req, res) => {
   } catch (error) {
     console.error("Login error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error during login",
     });
   }
 };
 
+// ==============================
+// GET CURRENT USER
+// ==============================
 const getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.userId).select("-password");
@@ -121,7 +141,7 @@ const getCurrentUser = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       user: {
         id: user._id,
@@ -133,13 +153,16 @@ const getCurrentUser = async (req, res) => {
   } catch (error) {
     console.error("Get current user error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error",
     });
   }
 };
 
+// ==============================
+// FORGOT PASSWORD
+// ==============================
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -151,11 +174,13 @@ const forgotPassword = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     const user = await User.findOne({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
     });
 
-    // Don't reveal whether an email exists.
+    // Don't reveal whether an account exists.
     if (!user) {
       return res.status(200).json({
         success: true,
@@ -164,10 +189,10 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    // Generate a cryptographically secure random token.
+    // Generate cryptographically secure raw token.
     const resetToken = crypto.randomBytes(32).toString("hex");
 
-    // Store only the hashed token in MongoDB.
+    // Store only hashed token in MongoDB.
     const hashedToken = crypto
       .createHash("sha256")
       .update(resetToken)
@@ -175,14 +200,20 @@ const forgotPassword = async (req, res) => {
 
     user.resetPasswordToken = hashedToken;
 
-    // Token valid for 15 minutes.
-    user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+    // Token expires after 15 minutes.
+    user.resetPasswordExpires = new Date(
+      Date.now() + 15 * 60 * 1000
+    );
 
     await user.save();
 
-    // For now, log the raw token during development.
-    // Email delivery will be added in the next step.
-    console.log("Password reset token:", resetToken);
+    // Create reset link using the RAW token.
+    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
+
+    // Send reset email.
+    await sendPasswordResetEmail(user.email, resetUrl);
+
+    console.log("Password reset email sent to:", user.email);
 
     return res.status(200).json({
       success: true,
@@ -199,6 +230,9 @@ const forgotPassword = async (req, res) => {
   }
 };
 
+// ==============================
+// RESET PASSWORD
+// ==============================
 const resetPassword = async (req, res) => {
   try {
     const { token } = req.params;
@@ -218,16 +252,18 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash the token received from the reset link.
+    // Hash token received from reset URL.
     const hashedToken = crypto
       .createHash("sha256")
       .update(token)
       .digest("hex");
 
-    // Find user and make sure token has not expired.
+    // Find user with valid, non-expired token.
     const user = await User.findOne({
       resetPasswordToken: hashedToken,
-      resetPasswordExpires: { $gt: new Date() },
+      resetPasswordExpires: {
+        $gt: new Date(),
+      },
     });
 
     if (!user) {
@@ -237,11 +273,12 @@ const resetPassword = async (req, res) => {
       });
     }
 
-    // Hash the new password.
+    // Hash new password.
     const salt = await bcrypt.genSalt(12);
+
     user.password = await bcrypt.hash(password, salt);
 
-    // Invalidate the reset token immediately.
+    // Immediately invalidate reset token.
     user.resetPasswordToken = null;
     user.resetPasswordExpires = null;
 
@@ -261,10 +298,13 @@ const resetPassword = async (req, res) => {
   }
 };
 
+// ==============================
+// EXPORTS
+// ==============================
 module.exports = {
-    registerUser,
-    loginUser,
-    getCurrentUser,
-    forgotPassword,
-    resetPassword,
+  registerUser,
+  loginUser,
+  getCurrentUser,
+  forgotPassword,
+  resetPassword,
 };
