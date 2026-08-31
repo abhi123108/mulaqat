@@ -7,6 +7,7 @@ dotenv.config();
 const passport = require("./config/passport");
 const connectDatabase = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
+const meetingRoutes = require("./routes/meetingRoutes");
 
 const app = express();
 
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use(passport.initialize());
 
 app.use("/api/auth", authRoutes);
+app.use("/api/meetings", meetingRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({
