@@ -20,8 +20,19 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: true,
       minlength: 6,
+      default: null,
+    },
+
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
+    },
+
+    googleId: {
+      type: String,
+      default: null,
     },
 
     avatar: {
@@ -30,16 +41,14 @@ const userSchema = new mongoose.Schema(
     },
 
     resetPasswordToken: {
-  type: String,
-  default: null,
-},
+      type: String,
+      default: null,
+    },
 
-resetPasswordExpires: {
-  type: Date,
-  default: null,
-},
-
-
+    resetPasswordExpires: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,

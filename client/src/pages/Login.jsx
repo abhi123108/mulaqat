@@ -33,6 +33,13 @@ const Login = () => {
 
       localStorage.setItem("mulaqat_token", token);
 
+      if (response.data.user) {
+        localStorage.setItem(
+          "mulaqat_user",
+          JSON.stringify(response.data.user)
+        );
+      }
+
       navigate("/");
     } catch (error) {
       setError(
@@ -42,6 +49,10 @@ const Login = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleLogin = () => {
+    window.location.href = "http://localhost:5000/api/auth/google";
   };
 
   return (
@@ -73,25 +84,25 @@ const Login = () => {
           />
         </div>
 
-        <div>
-  <button
-    type="button"
-    onClick={() => navigate("/forgot-password")}
-    style={{
-      background: "none",
-      border: "none",
-      padding: 0,
-      cursor: "pointer",
-    }}
-  >
-    Forgot Password?
-  </button>
-</div>
-
         <button type="submit" disabled={loading}>
           {loading ? "Logging in..." : "Login"}
         </button>
       </form>
+
+      <div>
+        <button type="button" onClick={handleGoogleLogin}>
+          Continue with Google
+        </button>
+      </div>
+
+      <div>
+        <button
+          type="button"
+          onClick={() => navigate("/forgot-password")}
+        >
+          Forgot Password?
+        </button>
+      </div>
 
       {error && <p>{error}</p>}
     </div>
