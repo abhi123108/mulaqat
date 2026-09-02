@@ -1,6 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
+import {
+  connectSocket,
+  disconnectSocket,
+} from "../services/socket";
 
 const Home = () => {
   const navigate = useNavigate();
@@ -14,11 +18,56 @@ const Home = () => {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // ==============================
+  // CONNECT SOCKET
+  // ==============================
+  useEffect(() => {
+    let socket;
+
+    try {
+      socket = connectSocket();
+
+      socket.on("connect", () => {
+        console.log("Socket connected:", socket.id);
+      });
+
+      socket.on("connect_error", (error) => {
+        console.error(
+          "Socket connection error:",
+          error.message
+        );
+      });
+    } catch (error) {
+      console.error(
+        "Socket setup error:",
+        error.message
+      );
+    }
+
+    return () => {
+      if (socket) {
+        socket.off("connect");
+        socket.off("connect_error");
+      }
+
+      disconnectSocket();
+    };
+  }, []);
+
+  // ==============================
+  // LOGOUT
+  // ==============================
   const handleLogout = () => {
+    disconnectSocket();
+
     localStorage.removeItem("mulaqat_token");
+
     navigate("/login");
   };
 
+  // ==============================
+  // CREATE MEETING
+  // ==============================
   const handleCreateMeeting = async () => {
     setError("");
     setSuccess("");
@@ -31,7 +80,22 @@ const Home = () => {
 
       setCreatedMeeting(meeting);
       setSuccess("Meeting created successfully.");
+
+      // Connect socket
+      const socket = connectSocket();
+
+      // Join Socket.IO room
+      socket.emit("join-room", {
+        meetingId: meeting.meetingId,
+      });
+
+      console.log(
+        "Joined Socket.IO room:",
+        meeting.meetingId
+      );
     } catch (error) {
+      console.error("Create meeting error:", error);
+
       setError(
         error.response?.data?.message ||
           "Failed to create meeting. Please try again."
@@ -41,37 +105,40 @@ const Home = () => {
     }
   };
 
-  const handleJoinMeeting = async (event) => {
-    event.preventDefault();
+  // ==============================
+  // JOIN MEETING
+  // ==============================
+const handleJoinMeeting = async (event) => {
+  event.preventDefault();
 
-    setError("");
-    setSuccess("");
+  setError("");
+  setSuccess("");
 
-    const trimmedMeetingId = meetingId.trim();
+  const trimmedMeetingId = meetingId.trim().toUpperCase();
 
-    if (!trimmedMeetingId) {
-      setError("Please enter a meeting ID.");
-      return;
-    }
+  if (!trimmedMeetingId) {
+    setError("Please enter a meeting ID.");
+    return;
+  }
 
-    setLoadingJoin(true);
+  setLoadingJoin(true);
 
-    try {
-      const response = await api.post("/meetings/join", {
-        meetingId: trimmedMeetingId,
-      });
+  try {
+    await api.post("/meetings/join", {
+      meetingId: trimmedMeetingId,
+    });
 
-      setSuccess(response.data.message);
-      setMeetingId("");
-    } catch (error) {
-      setError(
-        error.response?.data?.message ||
-          "Failed to join meeting. Please try again."
-      );
-    } finally {
-      setLoadingJoin(false);
-    }
-  };
+    // Join successful -> directly open meeting page
+    navigate(`/meeting/${trimmedMeetingId}`);
+  } catch (error) {
+    setError(
+      error.response?.data?.message ||
+        "Failed to join meeting. Please try again."
+    );
+  } finally {
+    setLoadingJoin(false);
+  }
+};
 
   return (
     <div>
@@ -79,20 +146,31 @@ const Home = () => {
 
       <p>Welcome to Mulaqat.</p>
 
-      <button onClick={handleLogout}>Logout</button>
+      <button onClick={handleLogout}>
+        Logout
+      </button>
 
       <hr />
+
+      {/* ==============================
+          CREATE MEETING
+      ============================== */}
 
       <section>
         <h2>Create a Meeting</h2>
 
-        <p>Start a new video meeting and share the meeting ID.</p>
+        <p>
+          Start a new video meeting and share the
+          meeting ID.
+        </p>
 
         <button
           onClick={handleCreateMeeting}
           disabled={loadingCreate}
         >
-          {loadingCreate ? "Creating..." : "Create Meeting"}
+          {loadingCreate
+            ? "Creating..."
+            : "Create Meeting"}
         </button>
 
         {createdMeeting && (
@@ -100,10 +178,15 @@ const Home = () => {
             <h3>Meeting Created</h3>
 
             <p>
-              Meeting ID: <strong>{createdMeeting.meetingId}</strong>
+              Meeting ID:{" "}
+              <strong>
+                {createdMeeting.meetingId}
+              </strong>
             </p>
 
-            <p>Status: {createdMeeting.status}</p>
+            <p>
+              Status: {createdMeeting.status}
+            </p>
 
             <button
               onClick={() =>
@@ -114,16 +197,33 @@ const Home = () => {
             >
               Copy Meeting ID
             </button>
+
+            <button
+              onClick={() =>
+              navigate(
+              `/meeting/${createdMeeting.meetingId}`
+            )
+          }
+          >
+            Join Meeting
+          </button>
           </div>
         )}
       </section>
 
       <hr />
 
+      {/* ==============================
+          JOIN MEETING
+      ============================== */}
+
       <section>
         <h2>Join a Meeting</h2>
 
-        <p>Enter a meeting ID to join an existing meeting.</p>
+        <p>
+          Enter a meeting ID to join an existing
+          meeting.
+        </p>
 
         <form onSubmit={handleJoinMeeting}>
           <input
@@ -135,11 +235,20 @@ const Home = () => {
             placeholder="e.g. MUL-774D71ED"
           />
 
-          <button type="submit" disabled={loadingJoin}>
-            {loadingJoin ? "Joining..." : "Join Meeting"}
+          <button
+            type="submit"
+            disabled={loadingJoin}
+          >
+            {loadingJoin
+              ? "Joining..."
+              : "Join Meeting"}
           </button>
         </form>
       </section>
+
+      {/* ==============================
+          MESSAGES
+      ============================== */}
 
       {success && <p>{success}</p>}
 
