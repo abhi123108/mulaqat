@@ -11,7 +11,10 @@ export const connectSocket = () => {
     throw new Error("Authentication required");
   }
 
-  if (socket?.connected) {
+  // IMPORTANT:
+  // Agar socket already create ho chuka hai,
+  // same socket return karo.
+  if (socket) {
     return socket;
   }
 
@@ -19,6 +22,7 @@ export const connectSocket = () => {
     auth: {
       token,
     },
+    autoConnect: true,
   });
 
   return socket;
@@ -30,6 +34,7 @@ export const getSocket = () => {
 
 export const disconnectSocket = () => {
   if (socket) {
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }

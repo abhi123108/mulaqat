@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import api from "../services/api";
 import {
   connectSocket,
@@ -8,498 +13,484 @@ import {
 
 const ICE_SERVERS = {
   iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
+    {
+      urls: "stun:stun.l.google.com:19302",
+    },
+    {
+      urls: "stun:stun1.l.google.com:19302",
+    },
   ],
 };
 
-const getDisplayName = (userId, socketId) => {
-  if (userId) {
-    return `Participant ${userId.slice(-6)}`;
-  }
+// ======================================================
+// REMOTE VIDEO
+// ======================================================
 
-  return `Participant ${socketId?.slice(-6) || "User"}`;
-};
-
-const VideoCard = ({
-  stream,
-  label,
-  muted = false,
-  status = "",
-}) => {
+const RemoteVideo = ({ participant }) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
     const video = videoRef.current;
 
-    if (!video) {
+    if (!video || !participant.stream) {
       return;
     }
 
-    if (!stream) {
-      video.srcObject = null;
+    video.srcObject = participant.stream;
+
+    const playVideo = async () => {
+      try {
+        await video.play();
+      } catch (error) {
+        console.warn(
+          "Remote video autoplay blocked:",
+          error
+        );
+      }
+    };
+
+    playVideo();
+
+    return () => {
+      if (video.srcObject === participant.stream) {
+        video.srcObject = null;
+      }
+    };
+  }, [participant.stream]);
+
+  return (
+    <div className="video-card">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+      />
+
+      <div className="video-label">
+        User{" "}
+        {participant.userId?.slice(-6) ||
+          participant.socketId?.slice(-6)}
+      </div>
+    </div>
+  );
+};
+
+// ======================================================
+// MEETING
+// ======================================================
+
+const Meeting = () => {
+  const { meetingId } = useParams();
+  const navigate = useNavigate();
+
+  // ====================================================
+  // REFS
+  // ====================================================
+
+  const localVideoRef = useRef(null);
+
+  const socketRef = useRef(null);
+
+  const localStreamRef = useRef(null);
+
+  // socketId -> RTCPeerConnection
+  const peerConnectionsRef = useRef(
+    new Map()
+  );
+
+  // socketId -> queued ICE candidates
+  const pendingIceCandidatesRef = useRef(
+    new Map()
+  );
+
+  // socketId -> MediaStream
+  const remoteStreamsRef = useRef(
+    new Map()
+  );
+
+  // Prevent stale async initialization
+  const initializationIdRef = useRef(0);
+
+  // Chat scroll
+  const chatMessagesRef = useRef(null);
+
+  // IMPORTANT:
+  // Avoid stale chatOpen value inside socket listener.
+  const chatOpenRef = useRef(false);
+
+  // ====================================================
+  // STATE
+  // ====================================================
+
+  const [meeting, setMeeting] = useState(null);
+
+  const [participants, setParticipants] = useState(
+    []
+  );
+
+  const [loading, setLoading] = useState(true);
+
+  const [cameraReady, setCameraReady] =
+    useState(false);
+
+  const [connected, setConnected] =
+    useState(false);
+
+  const [micEnabled, setMicEnabled] =
+    useState(true);
+
+  const [cameraEnabled, setCameraEnabled] =
+    useState(true);
+
+  const [error, setError] = useState("");
+
+  const [success, setSuccess] = useState("");
+
+  // ====================================================
+  // CHAT STATE
+  // ====================================================
+
+  const [chatOpen, setChatOpen] =
+    useState(false);
+
+  const [messages, setMessages] =
+    useState([]);
+
+  const [messageInput, setMessageInput] =
+    useState("");
+
+  const [unreadCount, setUnreadCount] =
+    useState(0);
+
+  const [chatError, setChatError] =
+    useState("");
+
+  // Keep ref synchronized
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+
+    if (chatOpen) {
+      setUnreadCount(0);
+    }
+  }, [chatOpen]);
+
+  // ====================================================
+  // LOCAL VIDEO ATTACH
+  // ====================================================
+  //
+  // IMPORTANT FIX:
+  //
+  // getUserMedia() loading screen ke time complete ho
+  // sakta hai, jab localVideoRef.current null hota hai.
+  //
+  // Ye effect stream ko actual <video> element mount
+  // hone ke baad attach karta hai.
+  // ====================================================
+
+  useEffect(() => {
+    const video = localVideoRef.current;
+    const stream = localStreamRef.current;
+
+    if (!video || !stream) {
       return;
     }
 
     video.srcObject = stream;
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
 
-    const play = async () => {
+    const playLocalVideo = async () => {
       try {
         await video.play();
       } catch (error) {
-        console.warn("Video autoplay blocked:", error);
+        console.warn(
+          "Local video autoplay blocked:",
+          error
+        );
       }
     };
 
-    play();
+    playLocalVideo();
 
     return () => {
       if (video.srcObject === stream) {
         video.srcObject = null;
       }
     };
-  }, [stream]);
+  }, [cameraReady]);
 
-  return (
-    <div className="mulaqat-video-card">
-      <div className="mulaqat-video-wrapper">
-        {stream ? (
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted={muted}
-          />
-        ) : (
-          <div className="mulaqat-video-placeholder">
-            <div className="mulaqat-avatar">
-              {label?.charAt(0)?.toUpperCase() || "U"}
-            </div>
+  // ====================================================
+  // UPDATE PARTICIPANT STREAM
+  // ====================================================
 
-            <span>{status || "Connecting..."}</span>
-          </div>
-        )}
-
-        <div className="mulaqat-video-overlay" />
-
-        <div className="mulaqat-name-badge">
-          <span className="mulaqat-live-dot" />
-          {label}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const Meeting = () => {
-  const { meetingId } = useParams();
-  const navigate = useNavigate();
-
-  const socketRef = useRef(null);
-  const localVideoRef = useRef(null);
-  const localStreamRef = useRef(null);
-
-  // remoteSocketId -> RTCPeerConnection
-  const peerConnectionsRef = useRef(new Map());
-
-  // remoteSocketId -> ICE candidates[]
-  const pendingIceCandidatesRef = useRef(new Map());
-
-  // remoteSocketId -> MediaStream
-  const remoteStreamsRef = useRef(new Map());
-
-  // Prevent duplicate offers.
-  const negotiatingPeersRef = useRef(new Set());
-
-  // Prevent initialization more than once.
-  const initializedRef = useRef(false);
-
-  const mountedRef = useRef(false);
-
-  const [meeting, setMeeting] = useState(null);
-  const [participants, setParticipants] = useState([]);
-
-  const [loading, setLoading] = useState(true);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [connected, setConnected] = useState(false);
-
-  const [micEnabled, setMicEnabled] = useState(true);
-  const [cameraEnabled, setCameraEnabled] = useState(true);
-
-  const [error, setError] = useState("");
-
-  /*
-   * ---------------------------------------------------------
-   * PARTICIPANT STATE
-   * ---------------------------------------------------------
-   */
-
-  const upsertParticipant = useCallback(
-    (socketId, userId = null, stream = null) => {
-      if (!socketId) {
-        return;
-      }
-
-      setParticipants((current) => {
-        const existing = current.find(
-          (participant) =>
-            participant.socketId === socketId
-        );
-
-        if (existing) {
-          return current.map((participant) =>
-            participant.socketId === socketId
-              ? {
-                  ...participant,
-                  userId:
-                    userId || participant.userId,
-                  stream:
-                    stream || participant.stream || null,
-                }
-              : participant
-          );
+  const updateParticipantStream =
+    useCallback(
+      (socketId, userId, stream) => {
+        // Don't render empty MediaStreams
+        if (
+          !stream ||
+          stream.getTracks().length === 0
+        ) {
+          return;
         }
 
-        return [
-          ...current,
-          {
-            socketId,
-            userId,
-            stream,
-          },
-        ];
-      });
-    },
-    []
-  );
+        setParticipants((current) => {
+          const existing = current.find(
+            (participant) =>
+              participant.socketId === socketId
+          );
 
-  const removeParticipant = useCallback(
-    (socketId) => {
+          if (existing) {
+            return current.map(
+              (participant) =>
+                participant.socketId === socketId
+                  ? {
+                      ...participant,
+                      userId:
+                        userId ||
+                        participant.userId,
+                      stream,
+                    }
+                  : participant
+            );
+          }
+
+          return [
+            ...current,
+            {
+              socketId,
+              userId,
+              stream,
+            },
+          ];
+        });
+      },
+      []
+    );
+
+  // ====================================================
+  // REMOVE PARTICIPANT
+  // ====================================================
+
+  const removeParticipant =
+    useCallback((socketId) => {
       setParticipants((current) =>
         current.filter(
           (participant) =>
             participant.socketId !== socketId
         )
       );
-    },
-    []
-  );
+    }, []);
 
-  /*
-   * ---------------------------------------------------------
-   * PEER CONNECTION
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // CREATE PEER CONNECTION
+  // ====================================================
 
-  const createPeerConnection = useCallback(
-    (remoteSocketId, remoteUserId = null) => {
-      if (!remoteSocketId) {
-        return null;
-      }
-
-      const existing =
-        peerConnectionsRef.current.get(
-          remoteSocketId
-        );
-
-      if (existing) {
-        return existing;
-      }
-
-      const peerConnection =
-        new RTCPeerConnection(ICE_SERVERS);
-
-      /*
-       * Add local audio/video tracks.
-       */
-      const localStream =
-        localStreamRef.current;
-
-      if (localStream) {
-        localStream
-          .getTracks()
-          .forEach((track) => {
-            peerConnection.addTrack(
-              track,
-              localStream
-            );
-          });
-      }
-
-      /*
-       * Remote stream received.
-       */
-      peerConnection.ontrack = (event) => {
-        const remoteStream =
-          event.streams?.[0];
-
-        if (!remoteStream) {
-          return;
-        }
-
-        console.log(
-          "Remote stream received:",
-          remoteSocketId
-        );
-
-        remoteStreamsRef.current.set(
-          remoteSocketId,
-          remoteStream
-        );
-
-        upsertParticipant(
-          remoteSocketId,
-          remoteUserId,
-          remoteStream
-        );
-      };
-
-      /*
-       * ICE candidates.
-       */
-      peerConnection.onicecandidate = (
-        event
+  const createPeerConnection =
+    useCallback(
+      (
+        targetSocketId,
+        targetUserId = null
       ) => {
-        if (
-          !event.candidate ||
-          !socketRef.current
-        ) {
-          return;
+        if (!socketRef.current) {
+          return null;
         }
 
-        socketRef.current.emit(
-          "ice-candidate",
-          {
-            target: remoteSocketId,
-            candidate: event.candidate,
-          }
-        );
-      };
-
-      /*
-       * Connection state.
-       */
-      peerConnection.onconnectionstatechange =
-        () => {
-          const state =
-            peerConnection.connectionState;
-
-          console.log(
-            `Peer ${remoteSocketId}:`,
-            state
+        // Existing peer
+        const existing =
+          peerConnectionsRef.current.get(
+            targetSocketId
           );
 
-          if (state === "connected") {
-            upsertParticipant(
-              remoteSocketId,
-              remoteUserId,
-              remoteStreamsRef.current.get(
-                remoteSocketId
-              ) || null
-            );
+        if (existing) {
+          return existing;
+        }
+
+        const peerConnection =
+          new RTCPeerConnection(
+            ICE_SERVERS
+          );
+
+        // ==============================================
+        // ADD LOCAL TRACKS
+        // ==============================================
+
+        const localStream =
+          localStreamRef.current;
+
+        if (localStream) {
+          localStream
+            .getTracks()
+            .forEach((track) => {
+              peerConnection.addTrack(
+                track,
+                localStream
+              );
+            });
+        }
+
+        // ==============================================
+        // REMOTE TRACK
+        // ==============================================
+
+        peerConnection.ontrack = (
+          event
+        ) => {
+          const remoteStream =
+            event.streams?.[0];
+
+          if (!remoteStream) {
+            return;
           }
 
           if (
-            state === "failed" ||
-            state === "closed"
+            remoteStream.getTracks()
+              .length === 0
           ) {
-            peerConnection.close();
-
-            peerConnectionsRef.current.delete(
-              remoteSocketId
-            );
-
-            pendingIceCandidatesRef.current.delete(
-              remoteSocketId
-            );
-
-            negotiatingPeersRef.current.delete(
-              remoteSocketId
-            );
-
-            remoteStreamsRef.current.delete(
-              remoteSocketId
-            );
-
-            removeParticipant(
-              remoteSocketId
-            );
+            return;
           }
+
+          remoteStreamsRef.current.set(
+            targetSocketId,
+            remoteStream
+          );
+
+          updateParticipantStream(
+            targetSocketId,
+            targetUserId,
+            remoteStream
+          );
         };
 
-      /*
-       * Store connection.
-       */
-      peerConnectionsRef.current.set(
-        remoteSocketId,
-        peerConnection
-      );
+        // ==============================================
+        // ICE
+        // ==============================================
 
-      /*
-       * Add temporary participant card.
-       */
-      upsertParticipant(
-        remoteSocketId,
-        remoteUserId,
-        remoteStreamsRef.current.get(
-          remoteSocketId
-        ) || null
-      );
+        peerConnection.onicecandidate =
+          (event) => {
+            if (!event.candidate) {
+              return;
+            }
 
-      return peerConnection;
-    },
-    [
-      removeParticipant,
-      upsertParticipant,
-    ]
-  );
+            if (
+              !socketRef.current?.connected
+            ) {
+              return;
+            }
 
-  /*
-   * ---------------------------------------------------------
-   * ICE QUEUE
-   * ---------------------------------------------------------
-   */
+            socketRef.current.emit(
+              "ice-candidate",
+              {
+                target: targetSocketId,
+                candidate:
+                  event.candidate,
+              }
+            );
+          };
 
-  const queueIceCandidate = useCallback(
-    (socketId, candidate) => {
-      const queue =
-        pendingIceCandidatesRef.current.get(
-          socketId
-        ) || [];
+        // ==============================================
+        // CONNECTION STATE
+        // ==============================================
 
-      queue.push(candidate);
+        peerConnection.onconnectionstatechange =
+          () => {
+            const state =
+              peerConnection.connectionState;
 
-      pendingIceCandidatesRef.current.set(
-        socketId,
-        queue
-      );
-    },
-    []
-  );
+            console.log(
+              `Peer ${targetSocketId} connection state:`,
+              state
+            );
 
-  const flushPendingIceCandidates =
-    useCallback(async (socketId, peerConnection) => {
-      const queue =
-        pendingIceCandidatesRef.current.get(
-          socketId
+            if (state === "connected") {
+              setConnected(true);
+            }
+
+            if (
+              state === "failed" ||
+              state === "closed"
+            ) {
+              cleanupPeer(
+                targetSocketId
+              );
+            }
+          };
+
+        peerConnectionsRef.current.set(
+          targetSocketId,
+          peerConnection
         );
 
-      if (!queue?.length) {
-        return;
-      }
+        return peerConnection;
+      },
+      [
+        updateParticipantStream,
+      ]
+    );
 
-      console.log(
-        `Flushing ${queue.length} ICE candidates for ${socketId}`
-      );
+  // ====================================================
+  // FLUSH ICE
+  // ====================================================
 
-      for (const candidate of queue) {
-        try {
-          await peerConnection.addIceCandidate(
-            new RTCIceCandidate(candidate)
+  const flushPendingIceCandidates =
+    useCallback(
+      async (
+        socketId,
+        peerConnection
+      ) => {
+        const candidates =
+          pendingIceCandidatesRef.current.get(
+            socketId
           );
-        } catch (error) {
-          console.warn(
-            "Queued ICE candidate failed:",
-            error
-          );
+
+        if (!candidates?.length) {
+          return;
         }
-      }
 
-      pendingIceCandidatesRef.current.delete(
-        socketId
-      );
-    }, []);
+        for (const candidate of candidates) {
+          try {
+            await peerConnection.addIceCandidate(
+              new RTCIceCandidate(
+                candidate
+              )
+            );
+          } catch (error) {
+            console.warn(
+              "Failed to add queued ICE candidate:",
+              error
+            );
+          }
+        }
 
-  /*
-   * ---------------------------------------------------------
-   * DETERMINISTIC INITIATOR
-   * ---------------------------------------------------------
-   *
-   * Only the socket with the smaller ID creates
-   * the offer for a pair.
-   *
-   * This avoids offer glare.
-   */
+        pendingIceCandidatesRef.current.delete(
+          socketId
+        );
+      },
+      []
+    );
 
-  const shouldInitiate = useCallback(
-    (remoteSocketId) => {
-      const localSocketId =
-        socketRef.current?.id;
-
-      if (
-        !localSocketId ||
-        !remoteSocketId
-      ) {
-        return false;
-      }
-
-      return (
-        localSocketId < remoteSocketId
-      );
-    },
-    []
-  );
-
-  /*
-   * ---------------------------------------------------------
-   * CREATE OFFER
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // CREATE OFFER
+  // ====================================================
 
   const createOffer = useCallback(
     async (
-      remoteSocketId,
-      remoteUserId = null
+      targetSocketId,
+      targetUserId = null
     ) => {
-      if (!socketRef.current) {
-        return;
-      }
-
-      if (
-        !shouldInitiate(remoteSocketId)
-      ) {
-        console.log(
-          "Not initiator:",
-          socketRef.current.id,
-          "->",
-          remoteSocketId
-        );
-
-        return;
-      }
-
-      if (
-        negotiatingPeersRef.current.has(
-          remoteSocketId
-        )
-      ) {
-        console.log(
-          "Already negotiating:",
-          remoteSocketId
-        );
-
-        return;
-      }
-
-      negotiatingPeersRef.current.add(
-        remoteSocketId
-      );
-
       try {
         const peerConnection =
           createPeerConnection(
-            remoteSocketId,
-            remoteUserId
+            targetSocketId,
+            targetUserId
           );
 
         if (!peerConnection) {
           return;
         }
 
-        /*
-         * Don't create another offer if already
-         * negotiating / connected.
-         */
+        // Avoid creating duplicate offer
         if (
           peerConnection.signalingState !==
           "stable"
@@ -514,38 +505,37 @@ const Meeting = () => {
           offer
         );
 
-        socketRef.current.emit("offer", {
-          target: remoteSocketId,
-          offer: peerConnection.localDescription,
-        });
+        if (
+          !socketRef.current?.connected
+        ) {
+          return;
+        }
+
+        socketRef.current.emit(
+          "offer",
+          {
+            target: targetSocketId,
+            offer,
+          }
+        );
 
         console.log(
-          "Offer sent:",
-          remoteSocketId
+          "Offer sent to:",
+          targetSocketId
         );
       } catch (error) {
         console.error(
-          "Offer creation failed:",
-          remoteSocketId,
+          `Offer creation failed for ${targetSocketId}:`,
           error
-        );
-      } finally {
-        negotiatingPeersRef.current.delete(
-          remoteSocketId
         );
       }
     },
-    [
-      createPeerConnection,
-      shouldInitiate,
-    ]
+    [createPeerConnection]
   );
 
-  /*
-   * ---------------------------------------------------------
-   * HANDLE OFFER
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // HANDLE OFFER
+  // ====================================================
 
   const handleOffer = useCallback(
     async ({
@@ -564,24 +554,10 @@ const Meeting = () => {
           return;
         }
 
-        /*
-         * If we're not stable, don't overwrite an
-         * active negotiation.
-         */
-        if (
-          peerConnection.signalingState !==
-          "stable"
-        ) {
-          console.warn(
-            "Ignoring offer because signaling state is:",
-            peerConnection.signalingState
-          );
-
-          return;
-        }
-
         await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(offer)
+          new RTCSessionDescription(
+            offer
+          )
         );
 
         await flushPendingIceCandidates(
@@ -596,23 +572,27 @@ const Meeting = () => {
           answer
         );
 
-        socketRef.current?.emit(
+        if (
+          !socketRef.current?.connected
+        ) {
+          return;
+        }
+
+        socketRef.current.emit(
           "answer",
           {
             target: sender,
-            answer:
-              peerConnection.localDescription,
+            answer,
           }
         );
 
         console.log(
-          "Answer sent:",
+          "Answer sent to:",
           sender
         );
       } catch (error) {
         console.error(
-          "Offer handling failed:",
-          sender,
+          `Offer handling failed for ${sender}:`,
           error
         );
       }
@@ -623,14 +603,15 @@ const Meeting = () => {
     ]
   );
 
-  /*
-   * ---------------------------------------------------------
-   * HANDLE ANSWER
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // HANDLE ANSWER
+  // ====================================================
 
   const handleAnswer = useCallback(
-    async ({ sender, answer }) => {
+    async ({
+      sender,
+      answer,
+    }) => {
       try {
         const peerConnection =
           peerConnectionsRef.current.get(
@@ -639,42 +620,25 @@ const Meeting = () => {
 
         if (!peerConnection) {
           console.warn(
-            "No peer connection for answer:",
+            "Peer connection not found:",
             sender
           );
-
-          return;
-        }
-
-        if (
-          peerConnection.signalingState !==
-          "have-local-offer"
-        ) {
-          console.warn(
-            "Ignoring answer. State:",
-            peerConnection.signalingState
-          );
-
           return;
         }
 
         await peerConnection.setRemoteDescription(
-          new RTCSessionDescription(answer)
+          new RTCSessionDescription(
+            answer
+          )
         );
 
         await flushPendingIceCandidates(
           sender,
           peerConnection
         );
-
-        console.log(
-          "Answer accepted:",
-          sender
-        );
       } catch (error) {
         console.error(
-          "Answer handling failed:",
-          sender,
+          `Answer handling failed for ${sender}:`,
           error
         );
       }
@@ -682,24 +646,17 @@ const Meeting = () => {
     [flushPendingIceCandidates]
   );
 
-  /*
-   * ---------------------------------------------------------
-   * HANDLE ICE
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // HANDLE ICE
+  // ====================================================
 
   const handleIceCandidate =
     useCallback(
       async ({
         sender,
-        userId,
         candidate,
       }) => {
         try {
-          if (!candidate) {
-            return;
-          }
-
           let peerConnection =
             peerConnectionsRef.current.get(
               sender
@@ -708,8 +665,7 @@ const Meeting = () => {
           if (!peerConnection) {
             peerConnection =
               createPeerConnection(
-                sender,
-                userId
+                sender
               );
           }
 
@@ -721,37 +677,45 @@ const Meeting = () => {
             peerConnection.remoteDescription
           ) {
             await peerConnection.addIceCandidate(
-              new RTCIceCandidate(candidate)
+              new RTCIceCandidate(
+                candidate
+              )
             );
           } else {
-            queueIceCandidate(
+            const queue =
+              pendingIceCandidatesRef.current.get(
+                sender
+              ) || [];
+
+            queue.push(candidate);
+
+            pendingIceCandidatesRef.current.set(
               sender,
-              candidate
+              queue
             );
           }
         } catch (error) {
           console.warn(
-            "ICE candidate handling failed:",
-            sender,
+            `ICE candidate handling failed for ${sender}:`,
             error
           );
         }
       },
-      [
-        createPeerConnection,
-        queueIceCandidate,
-      ]
+      [createPeerConnection]
     );
 
-  /*
-   * ---------------------------------------------------------
-   * LOCAL MEDIA
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // START LOCAL MEDIA
+  // ====================================================
 
   const startLocalMedia =
     useCallback(async () => {
       try {
+        // Don't request camera twice
+        if (localStreamRef.current) {
+          return localStreamRef.current;
+        }
+
         const stream =
           await navigator.mediaDevices.getUserMedia(
             {
@@ -770,23 +734,6 @@ const Meeting = () => {
 
         localStreamRef.current =
           stream;
-
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject =
-            stream;
-
-          localVideoRef.current.muted =
-            true;
-
-          try {
-            await localVideoRef.current.play();
-          } catch (error) {
-            console.warn(
-              "Local video play failed:",
-              error
-            );
-          }
-        }
 
         setCameraReady(true);
         setMicEnabled(true);
@@ -820,17 +767,21 @@ const Meeting = () => {
         ) {
           message =
             "Camera or microphone is already being used by another application.";
+        } else if (
+          error.name ===
+          "SecurityError"
+        ) {
+          message =
+            "Camera/microphone access is blocked by browser security settings.";
         }
 
         throw new Error(message);
       }
     }, []);
 
-  /*
-   * ---------------------------------------------------------
-   * PEER CLEANUP
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // CLEANUP PEER
+  // ====================================================
 
   const cleanupPeer = useCallback(
     (socketId) => {
@@ -841,8 +792,10 @@ const Meeting = () => {
 
       if (peerConnection) {
         peerConnection.ontrack = null;
+
         peerConnection.onicecandidate =
           null;
+
         peerConnection.onconnectionstatechange =
           null;
 
@@ -861,22 +814,17 @@ const Meeting = () => {
         socketId
       );
 
-      negotiatingPeersRef.current.delete(
-        socketId
-      );
+      removeParticipant(socketId);
     },
-    []
+    [removeParticipant]
   );
 
-  /*
-   * ---------------------------------------------------------
-   * COMPLETE CLEANUP
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // CLEANUP EVERYTHING
+  // ====================================================
 
   const cleanup = useCallback(() => {
-    console.log("Cleaning meeting...");
-
+    // Close all peer connections
     peerConnectionsRef.current.forEach(
       (peerConnection) => {
         peerConnection.ontrack = null;
@@ -890,16 +838,18 @@ const Meeting = () => {
     );
 
     peerConnectionsRef.current.clear();
-    pendingIceCandidatesRef.current.clear();
-    remoteStreamsRef.current.clear();
-    negotiatingPeersRef.current.clear();
 
+    pendingIceCandidatesRef.current.clear();
+
+    remoteStreamsRef.current.clear();
+
+    // Stop local camera/mic
     if (localStreamRef.current) {
       localStreamRef.current
         .getTracks()
-        .forEach((track) =>
-          track.stop()
-        );
+        .forEach((track) => {
+          track.stop();
+        });
 
       localStreamRef.current = null;
     }
@@ -910,27 +860,45 @@ const Meeting = () => {
     }
 
     setParticipants([]);
+
+    setMessages([]);
+
     setCameraReady(false);
+
     setConnected(false);
+
+    setChatOpen(false);
+
+    setUnreadCount(0);
+
+    setMessageInput("");
+
+    setChatError("");
   }, []);
 
-  /*
-   * ---------------------------------------------------------
-   * INITIALIZE MEETING
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // INITIALIZE MEETING
+  // ====================================================
 
   useEffect(() => {
-    mountedRef.current = true;
+    const initializationId =
+      ++initializationIdRef.current;
 
     let cancelled = false;
-    let socket = null;
+
+    let activeSocket = null;
+
+    let listenersAttached = false;
 
     const initializeMeeting =
       async () => {
         try {
           setLoading(true);
           setError("");
+
+          // ============================================
+          // AUTH
+          // ============================================
 
           const token =
             localStorage.getItem(
@@ -942,181 +910,276 @@ const Meeting = () => {
             return;
           }
 
-          /*
-           * Prevent duplicate initialization.
-           */
-          if (initializedRef.current) {
-            return;
-          }
+          // ============================================
+          // GET MEETING
+          // ============================================
 
-          initializedRef.current = true;
-
-          /*
-           * Get meeting.
-           */
           const response =
             await api.get(
               `/meetings/${meetingId}`
             );
 
-          if (cancelled) {
+          if (
+            cancelled ||
+            initializationId !==
+              initializationIdRef.current
+          ) {
             return;
           }
 
-          setMeeting(
-            response.data.meeting
-          );
+          const meetingData =
+            response.data.meeting;
 
-          /*
-           * Camera first.
-           */
-          await startLocalMedia();
+          setMeeting(meetingData);
 
-          if (cancelled) {
+          // ============================================
+          // CAMERA
+          // ============================================
+
+          const stream =
+            await startLocalMedia();
+
+          // React StrictMode / stale initialization
+          // protection
+          if (
+            cancelled ||
+            initializationId !==
+              initializationIdRef.current
+          ) {
+            if (stream) {
+              stream
+                .getTracks()
+                .forEach((track) =>
+                  track.stop()
+                );
+            }
+
+            if (
+              localStreamRef.current ===
+              stream
+            ) {
+              localStreamRef.current =
+                null;
+            }
+
             return;
           }
 
-          /*
-           * Socket.
-           */
-          socket = connectSocket();
+          // ============================================
+          // SOCKET
+          // ============================================
+
+          const socket =
+            connectSocket();
+
+          activeSocket = socket;
 
           socketRef.current = socket;
 
-          /*
-           * -----------------------------
-           * SOCKET EVENTS
-           * -----------------------------
-           */
+          // ============================================
+          // CONNECT
+          // ============================================
 
-          const handleConnect = () => {
-            if (cancelled) {
-              return;
-            }
-
-            console.log(
-              "Socket connected:",
-              socket.id
-            );
-
-            setConnected(true);
-
-            socket.emit("join-room", {
-              meetingId,
-            });
-          };
-
-          const handleDisconnect = () => {
-            console.log(
-              "Socket disconnected"
-            );
-
-            if (!cancelled) {
-              setConnected(false);
-            }
-          };
-
-          const handleConnectError = (
-            socketError
-          ) => {
-            console.error(
-              "Socket connection error:",
-              socketError
-            );
-
-            if (!cancelled) {
-              setError(
-                socketError.message ||
-                  "Unable to connect to meeting server."
-              );
-            }
-          };
-
-          /*
-           * Existing users.
-           *
-           * Only deterministic initiator
-           * creates the offer.
-           */
-          const handleRoomUsers = (
-            users
-          ) => {
-            console.log(
-              "Room users:",
-              users
-            );
-
-            users.forEach((user) => {
-              upsertParticipant(
-                user.socketId,
-                user.userId,
-                remoteStreamsRef.current.get(
-                  user.socketId
-                ) || null
-              );
-
+          const handleConnect =
+            () => {
               if (
-                shouldInitiate(
-                  user.socketId
-                )
+                cancelled ||
+                initializationId !==
+                  initializationIdRef.current
               ) {
-                createOffer(
-                  user.socketId,
-                  user.userId
+                return;
+              }
+
+              console.log(
+                "Socket connected:",
+                socket.id
+              );
+
+              setConnected(true);
+
+              socket.emit(
+                "join-room",
+                {
+                  meetingId,
+                }
+              );
+            };
+
+          // ============================================
+          // DISCONNECT
+          // ============================================
+
+          const handleDisconnect =
+            (reason) => {
+              console.log(
+                "Socket disconnected:",
+                reason
+              );
+
+              if (!cancelled) {
+                setConnected(false);
+              }
+            };
+
+          // ============================================
+          // CONNECT ERROR
+          // ============================================
+
+          const handleConnectError =
+            (socketError) => {
+              console.error(
+                "Socket connection error:",
+                socketError
+              );
+
+              if (!cancelled) {
+                setError(
+                  socketError.message ||
+                    "Unable to connect to meeting server."
                 );
               }
-            });
-          };
+            };
 
-          /*
-           * A new user joined.
-           *
-           * Existing user checks deterministic
-           * initiator rule.
-           */
-          const handleUserJoined = (
-            user
-          ) => {
-            console.log(
-              "User joined:",
-              user
-            );
+          // ============================================
+          // EXISTING ROOM USERS
+          // ============================================
 
-            upsertParticipant(
-              user.socketId,
-              user.userId,
-              null
-            );
+          const handleRoomUsers =
+            (users) => {
+              if (cancelled) {
+                return;
+              }
 
-            if (
-              shouldInitiate(
-                user.socketId
-              )
-            ) {
-              createOffer(
-                user.socketId,
-                user.userId
+              console.log(
+                "Existing room users:",
+                users
               );
-            }
-          };
 
-          const handleUserLeft = ({
-            socketId,
-            userId,
-          }) => {
-            console.log(
-              "User left:",
+              // Remove duplicate socket IDs
+              const uniqueUsers = [
+                ...new Map(
+                  users.map((user) => [
+                    user.socketId,
+                    user,
+                  ])
+                ).values(),
+              ];
+
+              uniqueUsers.forEach(
+                (user) => {
+                  if (
+                    user.socketId ===
+                    socket.id
+                  ) {
+                    return;
+                  }
+
+                  createOffer(
+                    user.socketId,
+                    user.userId
+                  );
+                }
+              );
+            };
+
+          // ============================================
+          // USER JOINED
+          // ============================================
+
+          const handleUserJoined =
+            (user) => {
+              console.log(
+                "New user joined:",
+                user
+              );
+            };
+
+          // ============================================
+          // USER LEFT
+          // ============================================
+
+          const handleUserLeft =
+            ({
               socketId,
-              userId
-            );
+              userId,
+            }) => {
+              console.log(
+                "User left:",
+                socketId,
+                userId
+              );
 
-            cleanupPeer(socketId);
-            removeParticipant(socketId);
-          };
+              cleanupPeer(socketId);
+            };
 
-          /*
-           * Register listeners BEFORE connecting.
-           */
+          // ============================================
+          // CHAT MESSAGE
+          // ============================================
+
+          const handleChatMessage =
+            (chatMessage) => {
+              if (cancelled) {
+                return;
+              }
+
+              console.log(
+                "Chat message received:",
+                chatMessage
+              );
+
+              setMessages((current) => {
+                // Prevent duplicate message
+                if (
+                  current.some(
+                    (message) =>
+                      message.messageId ===
+                      chatMessage.messageId
+                  )
+                ) {
+                  return current;
+                }
+
+                return [
+                  ...current,
+                  chatMessage,
+                ];
+              });
+
+              // Only unread when chat is closed
+              if (!chatOpenRef.current) {
+                setUnreadCount(
+                  (current) =>
+                    current + 1
+                );
+              }
+            };
+
+          // ============================================
+          // CHAT ERROR
+          // ============================================
+
+          const handleChatError =
+            (data) => {
+              if (cancelled) {
+                return;
+              }
+
+              setChatError(
+                data?.message ||
+                  "Unable to send message."
+              );
+
+              setTimeout(() => {
+                if (!cancelled) {
+                  setChatError("");
+                }
+              }, 3000);
+            };
+
+          // ============================================
+          // ATTACH LISTENERS
+          // ============================================
+
           socket.on(
             "connect",
             handleConnect
@@ -1162,9 +1225,19 @@ const Meeting = () => {
             handleUserLeft
           );
 
-          /*
-           * Socket may already be connected.
-           */
+          socket.on(
+            "chat-message",
+            handleChatMessage
+          );
+
+          socket.on(
+            "chat-error",
+            handleChatError
+          );
+
+          listenersAttached = true;
+
+          // Already connected?
           if (socket.connected) {
             handleConnect();
           }
@@ -1174,10 +1247,11 @@ const Meeting = () => {
             error
           );
 
-          initializedRef.current =
-            false;
-
-          if (!cancelled) {
+          if (
+            !cancelled &&
+            initializationId ===
+              initializationIdRef.current
+          ) {
             setError(
               error.response?.data
                 ?.message ||
@@ -1188,7 +1262,8 @@ const Meeting = () => {
         } finally {
           if (
             !cancelled &&
-            mountedRef.current
+            initializationId ===
+              initializationIdRef.current
           ) {
             setLoading(false);
           }
@@ -1197,55 +1272,75 @@ const Meeting = () => {
 
     initializeMeeting();
 
-    /*
-     * IMPORTANT:
-     * Cleanup is synchronous and does not depend
-     * on an async function returning cleanup.
-     */
+    // ==================================================
+    // CLEANUP
+    // ==================================================
+
     return () => {
       cancelled = true;
-      mountedRef.current = false;
 
-      if (socket) {
-        socket.removeAllListeners(
+      // Remove listeners
+      if (
+        activeSocket &&
+        listenersAttached
+      ) {
+        activeSocket.off(
           "connect"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "disconnect"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "connect_error"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "room-users"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "user-joined"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "offer"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "answer"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "ice-candidate"
         );
-        socket.removeAllListeners(
+
+        activeSocket.off(
           "user-left"
+        );
+
+        activeSocket.off(
+          "chat-message"
+        );
+
+        activeSocket.off(
+          "chat-error"
         );
       }
 
       cleanup();
 
-      socketRef.current = null;
-
-      initializedRef.current = false;
-
-      /*
-       * Meeting owns the socket.
-       */
-      disconnectSocket();
+      // Only disconnect the socket that belongs
+      // to this initialization.
+      if (
+        activeSocket &&
+        socketRef.current ===
+          activeSocket
+      ) {
+        disconnectSocket();
+        socketRef.current = null;
+      }
     };
   }, [
     meetingId,
@@ -1255,18 +1350,95 @@ const Meeting = () => {
     handleOffer,
     handleAnswer,
     handleIceCandidate,
-    shouldInitiate,
     cleanupPeer,
-    removeParticipant,
-    upsertParticipant,
     cleanup,
   ]);
 
-  /*
-   * ---------------------------------------------------------
-   * CONTROLS
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // AUTO SCROLL CHAT
+  // ====================================================
+
+  useEffect(() => {
+    if (!chatMessagesRef.current) {
+      return;
+    }
+
+    chatMessagesRef.current.scrollTop =
+      chatMessagesRef.current.scrollHeight;
+  }, [messages]);
+
+  // ====================================================
+  // CHAT TOGGLE
+  // ====================================================
+
+  const toggleChat = () => {
+    setChatOpen((current) => {
+      const nextState = !current;
+
+      if (nextState) {
+        setUnreadCount(0);
+      }
+
+      return nextState;
+    });
+  };
+
+  // ====================================================
+  // SEND CHAT MESSAGE
+  // ====================================================
+
+  const sendChatMessage = () => {
+    const socket = socketRef.current;
+
+    if (!socket?.connected) {
+      setChatError(
+        "Not connected to meeting server."
+      );
+      return;
+    }
+
+    const trimmedMessage =
+      messageInput.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    if (trimmedMessage.length > 1000) {
+      setChatError(
+        "Message cannot exceed 1000 characters."
+      );
+      return;
+    }
+
+    socket.emit("send-message", {
+      message: trimmedMessage,
+    });
+
+    setMessageInput("");
+    setChatError("");
+  };
+
+  // ====================================================
+  // CHAT KEY
+  // ====================================================
+
+  const handleChatKeyDown = (
+    event
+  ) => {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey
+    ) {
+      event.preventDefault();
+
+      sendChatMessage();
+    }
+  };
+
+  // ====================================================
+  // MICROPHONE
+  // ====================================================
 
   const toggleMicrophone = () => {
     const stream =
@@ -1276,17 +1448,29 @@ const Meeting = () => {
       return;
     }
 
-    const tracks =
+    const audioTracks =
       stream.getAudioTracks();
 
-    const nextState = !micEnabled;
+    if (!audioTracks.length) {
+      return;
+    }
 
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
+    const nextState =
+      !micEnabled;
+
+    audioTracks.forEach(
+      (track) => {
+        track.enabled =
+          nextState;
+      }
+    );
 
     setMicEnabled(nextState);
   };
+
+  // ====================================================
+  // CAMERA
+  // ====================================================
 
   const toggleCamera = () => {
     const stream =
@@ -1296,688 +1480,845 @@ const Meeting = () => {
       return;
     }
 
-    const tracks =
+    const videoTracks =
       stream.getVideoTracks();
+
+    if (!videoTracks.length) {
+      return;
+    }
 
     const nextState =
       !cameraEnabled;
 
-    tracks.forEach((track) => {
-      track.enabled = nextState;
-    });
+    videoTracks.forEach(
+      (track) => {
+        track.enabled =
+          nextState;
+      }
+    );
 
-    setCameraEnabled(nextState);
+    setCameraEnabled(
+      nextState
+    );
   };
+
+  // ====================================================
+  // END CALL
+  // ====================================================
 
   const handleEndCall = () => {
     cleanup();
+
     disconnectSocket();
+
+    socketRef.current = null;
+
     navigate("/");
   };
 
-  /*
-   * ---------------------------------------------------------
-   * LOADING
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // LOADING
+  // ====================================================
 
   if (loading) {
     return (
-      <>
-        <style>{GLOBAL_STYLES}</style>
+      <div className="meeting-state">
+        <div>
+          <h2>
+            Joining meeting...
+          </h2>
 
-        <div className="mulaqat-page mulaqat-center">
-          <div className="mulaqat-loading-card">
-            <div className="mulaqat-spinner" />
-
-            <h2>Joining meeting</h2>
-
-            <p>
-              Preparing your camera and
-              microphone...
-            </p>
-          </div>
+          <p>
+            Please allow camera and
+            microphone access.
+          </p>
         </div>
-      </>
+      </div>
     );
   }
 
-  /*
-   * ---------------------------------------------------------
-   * ERROR
-   * ---------------------------------------------------------
-   */
+  // ====================================================
+  // ERROR
+  // ====================================================
 
   if (error) {
     return (
-      <>
-        <style>{GLOBAL_STYLES}</style>
+      <div className="meeting-state">
+        <div>
+          <h2>
+            Unable to join meeting
+          </h2>
 
-        <div className="mulaqat-page mulaqat-center">
-          <div className="mulaqat-error-card">
-            <div className="mulaqat-error-icon">
-              !
-            </div>
+          <p>{error}</p>
 
-            <h2>
-              Unable to join meeting
-            </h2>
-
-            <p>{error}</p>
-
-            <button
-              className="mulaqat-primary-btn"
-              onClick={() =>
-                navigate("/")
-              }
-            >
-              Back to Home
-            </button>
-          </div>
+          <button
+            onClick={() =>
+              navigate("/")
+            }
+            className="primary-button"
+          >
+            Back to Home
+          </button>
         </div>
-      </>
+      </div>
     );
   }
 
-  const totalParticipants =
-    participants.length + 1;
+  // ====================================================
+  // UI
+  // ====================================================
 
   return (
     <>
-      <style>{GLOBAL_STYLES}</style>
+      <style>{`
+        * {
+          box-sizing: border-box;
+        }
 
-      <div className="mulaqat-page">
-        {/* HEADER */}
-        <header className="mulaqat-header">
-          <div className="mulaqat-brand">
-            <div className="mulaqat-logo">
-              M
-            </div>
+        body {
+          margin: 0;
+          background: #0b0f19;
+          color: #f8fafc;
+          font-family: Inter, system-ui, -apple-system,
+            BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
 
+        button,
+        textarea {
+          font: inherit;
+        }
+
+        .meeting-page {
+          min-height: 100vh;
+          background: #0b0f19;
+          padding: 18px;
+        }
+
+        .meeting-layout {
+          max-width: 1600px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          min-height: calc(100vh - 36px);
+        }
+
+        .meeting-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+          padding: 14px 16px;
+          margin-bottom: 16px;
+          background: #111827;
+          border: 1px solid #1f2937;
+          border-radius: 16px;
+        }
+
+        .brand-title {
+          margin: 0;
+          font-size: 22px;
+          font-weight: 700;
+        }
+
+        .meeting-info {
+          margin: 5px 0 0;
+          color: #94a3b8;
+          font-size: 13px;
+        }
+
+        .meeting-status {
+          color: #86efac;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .chat-toggle,
+        .leave-button,
+        .control-button {
+          border: 1px solid #334155;
+          background: #1e293b;
+          color: #f8fafc;
+          border-radius: 10px;
+          padding: 10px 14px;
+          cursor: pointer;
+          transition: 0.2s ease;
+        }
+
+        .chat-toggle:hover,
+        .control-button:hover {
+          background: #334155;
+        }
+
+        .leave-button {
+          background: #dc2626;
+          border-color: #dc2626;
+        }
+
+        .leave-button:hover {
+          background: #b91c1c;
+        }
+
+        .meeting-content {
+          display: flex;
+          flex: 1;
+          min-height: 0;
+          gap: 16px;
+        }
+
+        .video-area {
+          flex: 1;
+          min-width: 0;
+        }
+
+        .video-grid {
+          display: grid;
+          grid-template-columns:
+            repeat(auto-fit, minmax(280px, 1fr));
+          gap: 14px;
+          width: 100%;
+        }
+
+        .video-card {
+          position: relative;
+          overflow: hidden;
+          min-height: 210px;
+          background: #111827;
+          border: 1px solid #1f2937;
+          border-radius: 14px;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+        }
+
+        .video-card video {
+          display: block;
+          width: 100%;
+          height: 100%;
+          min-height: 210px;
+          aspect-ratio: 16 / 9;
+          object-fit: cover;
+          background: #020617;
+        }
+
+        .video-label {
+          position: absolute;
+          left: 10px;
+          bottom: 10px;
+          padding: 6px 10px;
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.65);
+          color: white;
+          font-size: 12px;
+          font-weight: 600;
+          backdrop-filter: blur(6px);
+        }
+
+        .controls {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 16px;
+          padding: 14px;
+          background: #111827;
+          border: 1px solid #1f2937;
+          border-radius: 16px;
+        }
+
+        .control-button.active {
+          background: #2563eb;
+          border-color: #2563eb;
+        }
+
+        .control-button.off {
+          background: #7f1d1d;
+          border-color: #991b1b;
+        }
+
+        .chat-panel {
+          width: 340px;
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+          background: #111827;
+          border: 1px solid #1f2937;
+          border-radius: 16px;
+          overflow: hidden;
+        }
+
+        .chat-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px;
+          border-bottom: 1px solid #1f2937;
+        }
+
+        .chat-title {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 700;
+        }
+
+        .chat-subtitle {
+          margin: 3px 0 0;
+          color: #64748b;
+          font-size: 11px;
+        }
+
+        .chat-close {
+          border: none;
+          background: transparent;
+          color: #94a3b8;
+          font-size: 20px;
+          cursor: pointer;
+        }
+
+        .chat-messages {
+          flex: 1;
+          min-height: 300px;
+          overflow-y: auto;
+          padding: 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .chat-empty {
+          margin: auto;
+          text-align: center;
+          color: #64748b;
+          font-size: 13px;
+          padding: 20px;
+        }
+
+        .message-row {
+          display: flex;
+          flex-direction: column;
+          max-width: 85%;
+          gap: 3px;
+        }
+
+        .message-row.mine {
+          align-self: flex-end;
+          align-items: flex-end;
+        }
+
+        .message-row.theirs {
+          align-self: flex-start;
+          align-items: flex-start;
+        }
+
+        .message-sender {
+          color: #94a3b8;
+          font-size: 10px;
+          padding: 0 4px;
+        }
+
+        .message-bubble {
+          padding: 9px 12px;
+          border-radius: 12px;
+          font-size: 13px;
+          line-height: 1.4;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+
+        .mine .message-bubble {
+          background: #2563eb;
+          color: white;
+          border-bottom-right-radius: 4px;
+        }
+
+        .theirs .message-bubble {
+          background: #1e293b;
+          color: #e2e8f0;
+          border-bottom-left-radius: 4px;
+        }
+
+        .message-time {
+          color: #64748b;
+          font-size: 9px;
+          padding: 0 4px;
+        }
+
+        .chat-compose {
+          padding: 12px;
+          border-top: 1px solid #1f2937;
+        }
+
+        .chat-input-row {
+          display: flex;
+          gap: 8px;
+        }
+
+        .chat-input {
+          flex: 1;
+          resize: none;
+          min-height: 42px;
+          max-height: 110px;
+          padding: 10px 12px;
+          background: #0f172a;
+          color: #f8fafc;
+          border: 1px solid #334155;
+          border-radius: 10px;
+          outline: none;
+        }
+
+        .chat-input:focus {
+          border-color: #2563eb;
+        }
+
+        .send-button {
+          align-self: flex-end;
+          border: none;
+          background: #2563eb;
+          color: white;
+          border-radius: 10px;
+          padding: 11px 14px;
+          cursor: pointer;
+          font-weight: 600;
+        }
+
+        .send-button:hover {
+          background: #1d4ed8;
+        }
+
+        .chat-error {
+          margin: 6px 2px 0;
+          color: #fca5a5;
+          font-size: 11px;
+        }
+
+        .unread-badge {
+          display: inline-flex;
+          justify-content: center;
+          align-items: center;
+          min-width: 19px;
+          height: 19px;
+          padding: 0 5px;
+          margin-left: 5px;
+          border-radius: 999px;
+          background: #ef4444;
+          color: white;
+          font-size: 10px;
+          font-weight: 700;
+        }
+
+        .meeting-state {
+          min-height: 100vh;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          text-align: center;
+          padding: 30px;
+          background: #0b0f19;
+          color: #f8fafc;
+        }
+
+        .primary-button {
+          border: none;
+          background: #2563eb;
+          color: white;
+          padding: 10px 16px;
+          border-radius: 9px;
+          cursor: pointer;
+        }
+
+        .success-message {
+          color: #86efac;
+          font-size: 12px;
+          margin-bottom: 10px;
+        }
+
+        @media (max-width: 900px) {
+          .meeting-content {
+            flex-direction: column;
+          }
+
+          .chat-panel {
+            width: 100%;
+            height: 420px;
+          }
+        }
+
+        @media (max-width: 600px) {
+          .meeting-page {
+            padding: 10px;
+          }
+
+          .meeting-header {
+            padding: 12px;
+            border-radius: 12px;
+          }
+
+          .header-actions {
+            width: 100%;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+          }
+
+          .video-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .video-card,
+          .video-card video {
+            min-height: 200px;
+          }
+
+          .chat-panel {
+            height: 380px;
+          }
+
+          .chat-toggle,
+          .leave-button {
+            padding: 9px 11px;
+            font-size: 12px;
+          }
+        }
+      `}</style>
+
+      <div className="meeting-page">
+        <div className="meeting-layout">
+
+          {/* ==========================================
+              HEADER
+          ========================================== */}
+
+          <div className="meeting-header">
             <div>
-              <h1>Mulaqat</h1>
+              <h1 className="brand-title">
+                Mulaqat
+              </h1>
 
-              <div className="mulaqat-meeting-id">
+              <p className="meeting-info">
                 Meeting ID:{" "}
                 <strong>
                   {meetingId}
                 </strong>
+              </p>
+
+              <p className="meeting-status">
+                {connected
+                  ? `● Connected • ${
+                      participants.length +
+                      1
+                    } participants`
+                  : "● Connecting..."}
+              </p>
+            </div>
+
+            <div className="header-actions">
+              <button
+                className="chat-toggle"
+                onClick={toggleChat}
+              >
+                💬 Chat
+
+                {unreadCount > 0 && (
+                  <span className="unread-badge">
+                    {unreadCount > 99
+                      ? "99+"
+                      : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                className="leave-button"
+                onClick={handleEndCall}
+              >
+                Leave
+              </button>
+            </div>
+          </div>
+
+          {success && (
+            <div className="success-message">
+              {success}
+            </div>
+          )}
+
+          {/* ==========================================
+              CONTENT
+          ========================================== */}
+
+          <div className="meeting-content">
+
+            {/* ========================================
+                VIDEO AREA
+            ======================================== */}
+
+            <div className="video-area">
+              <div className="video-grid">
+
+                {/* ======================================
+                    LOCAL USER
+                ====================================== */}
+
+                <div className="video-card">
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                  />
+
+                  <div className="video-label">
+                    You
+                  </div>
+                </div>
+
+                {/* ======================================
+                    REMOTE USERS
+                ====================================== */}
+
+                {participants.map(
+                  (participant) => (
+                    <RemoteVideo
+                      key={
+                        participant.socketId
+                      }
+                      participant={
+                        participant
+                      }
+                    />
+                  )
+                )}
+              </div>
+
+              {!cameraReady && (
+                <p className="meeting-info">
+                  Starting camera and
+                  microphone...
+                </p>
+              )}
+
+              {/* ========================================
+                  CONTROLS
+              ======================================== */}
+
+              <div className="controls">
+
+                <button
+                  onClick={
+                    toggleMicrophone
+                  }
+                  className={`control-button ${
+                    micEnabled
+                      ? "active"
+                      : "off"
+                  }`}
+                >
+                  {micEnabled
+                    ? "🎤 Mute"
+                    : "🔇 Unmute"}
+                </button>
+
+                <button
+                  onClick={
+                    toggleCamera
+                  }
+                  className={`control-button ${
+                    cameraEnabled
+                      ? "active"
+                      : "off"
+                  }`}
+                >
+                  {cameraEnabled
+                    ? "📷 Camera Off"
+                    : "📷 Camera On"}
+                </button>
+
+                {/* Only ONE Chat button */}
+                <button
+                  onClick={toggleChat}
+                  className="control-button"
+                >
+                  💬 Chat
+
+                  {unreadCount > 0 && (
+                    <span className="unread-badge">
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+
               </div>
             </div>
-          </div>
 
-          <div className="mulaqat-header-right">
-            <div className="mulaqat-status">
-              <span
-                className={
-                  connected
-                    ? "status-dot online"
-                    : "status-dot"
-                }
-              />
+            {/* ========================================
+                CHAT PANEL
+            ======================================== */}
 
-              {connected
-                ? "Connected"
-                : "Connecting..."}
-            </div>
+            {chatOpen && (
+              <aside className="chat-panel">
 
-            <div className="mulaqat-count">
-              👥 {totalParticipants}
-            </div>
+                <div className="chat-header">
+                  <div>
+                    <h2 className="chat-title">
+                      Meeting Chat
+                    </h2>
 
-            <button
-              className="mulaqat-leave-btn"
-              onClick={handleEndCall}
-            >
-              Leave
-            </button>
-          </div>
-        </header>
+                    <p className="chat-subtitle">
+                      Messages are temporary
+                    </p>
+                  </div>
 
-        {/* VIDEO GRID */}
-        <main className="mulaqat-meeting-content">
-          <div
-            className={`mulaqat-video-grid count-${Math.min(
-              totalParticipants,
-              9
-            )}`}
-          >
-            {/* LOCAL */}
-            <VideoCard
-              stream={
-                localStreamRef.current
-              }
-              label="You"
-              muted
-              status={
-                cameraReady
-                  ? ""
-                  : "Starting camera..."
-              }
-            />
+                  <button
+                    className="chat-close"
+                    onClick={() =>
+                      setChatOpen(
+                        false
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
 
-            {/* REMOTES */}
-            {participants.map(
-              (participant) => (
-                <VideoCard
-                  key={
-                    participant.socketId
+                <div
+                  ref={
+                    chatMessagesRef
                   }
-                  stream={
-                    participant.stream
-                  }
-                  label={getDisplayName(
-                    participant.userId,
-                    participant.socketId
+                  className="chat-messages"
+                >
+                  {messages.length ===
+                  0 ? (
+                    <div className="chat-empty">
+                      No messages yet.
+                      <br />
+                      Start the conversation.
+                    </div>
+                  ) : (
+                    messages.map(
+                      (chatMessage) => {
+                        const isMine =
+                          chatMessage.socketId ===
+                          socketRef.current?.id;
+
+                        const senderName =
+                          isMine
+                            ? "You"
+                            : `User ${
+                                chatMessage.userId?.slice(
+                                  -6
+                                ) ||
+                                chatMessage.socketId?.slice(
+                                  -6
+                                ) ||
+                                "Unknown"
+                              }`;
+
+                        const messageTime =
+                          chatMessage.timestamp
+                            ? new Date(
+                                chatMessage.timestamp
+                              ).toLocaleTimeString(
+                                [],
+                                {
+                                  hour: "2-digit",
+                                  minute:
+                                    "2-digit",
+                                }
+                              )
+                            : "";
+
+                        return (
+                          <div
+                            key={
+                              chatMessage.messageId
+                            }
+                            className={`message-row ${
+                              isMine
+                                ? "mine"
+                                : "theirs"
+                            }`}
+                          >
+                            <span className="message-sender">
+                              {
+                                senderName
+                              }
+                            </span>
+
+                            <div className="message-bubble">
+                              {
+                                chatMessage.message
+                              }
+                            </div>
+
+                            <span className="message-time">
+                              {
+                                messageTime
+                              }
+                            </span>
+                          </div>
+                        );
+                      }
+                    )
                   )}
-                  status="Connecting..."
-                />
-              )
+                </div>
+
+                <div className="chat-compose">
+                  <div className="chat-input-row">
+                    <textarea
+                      className="chat-input"
+                      value={
+                        messageInput
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setMessageInput(
+                          event.target
+                            .value
+                        )
+                      }
+                      onKeyDown={
+                        handleChatKeyDown
+                      }
+                      placeholder="Type a message..."
+                      maxLength={1000}
+                      rows={1}
+                    />
+
+                    <button
+                      className="send-button"
+                      onClick={
+                        sendChatMessage
+                      }
+                    >
+                      Send
+                    </button>
+                  </div>
+
+                  {chatError && (
+                    <p className="chat-error">
+                      {chatError}
+                    </p>
+                  )}
+
+                  <p className="chat-subtitle">
+                    Enter to send •
+                    Shift + Enter for
+                    new line
+                  </p>
+                </div>
+              </aside>
             )}
+
           </div>
-        </main>
-
-        {/* CONTROLS */}
-        <div className="mulaqat-controls">
-          <button
-            className={`mulaqat-control-btn ${
-              !micEnabled
-                ? "disabled"
-                : ""
-            }`}
-            onClick={
-              toggleMicrophone
-            }
-            title={
-              micEnabled
-                ? "Mute microphone"
-                : "Unmute microphone"
-            }
-          >
-            <span>
-              {micEnabled
-                ? "🎤"
-                : "🔇"}
-            </span>
-
-            <small>
-              {micEnabled
-                ? "Mute"
-                : "Unmute"}
-            </small>
-          </button>
-
-          <button
-            className={`mulaqat-control-btn ${
-              !cameraEnabled
-                ? "disabled"
-                : ""
-            }`}
-            onClick={
-              toggleCamera
-            }
-            title={
-              cameraEnabled
-                ? "Turn camera off"
-                : "Turn camera on"
-            }
-          >
-            <span>
-              {cameraEnabled
-                ? "📷"
-                : "🚫"}
-            </span>
-
-            <small>
-              {cameraEnabled
-                ? "Camera"
-                : "Camera Off"}
-            </small>
-          </button>
-
-          <button
-            className="mulaqat-control-btn end"
-            onClick={handleEndCall}
-          >
-            <span>📞</span>
-            <small>Leave</small>
-          </button>
         </div>
       </div>
     </>
   );
 };
-
-const GLOBAL_STYLES = `
-  * {
-    box-sizing: border-box;
-  }
-
-  .mulaqat-page {
-    min-height: 100vh;
-    background:
-      radial-gradient(
-        circle at top,
-        #20252f 0%,
-        #101319 42%,
-        #090b0f 100%
-      );
-    color: #ffffff;
-    font-family:
-      Inter,
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      BlinkMacSystemFont,
-      "Segoe UI",
-      sans-serif;
-    padding-bottom: 110px;
-  }
-
-  .mulaqat-header {
-    height: 76px;
-    padding: 0 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    background: rgba(10,12,16,0.82);
-    backdrop-filter: blur(16px);
-    position: sticky;
-    top: 0;
-    z-index: 20;
-  }
-
-  .mulaqat-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .mulaqat-logo {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(
-      135deg,
-      #6d5dfc,
-      #8b7cff
-    );
-    font-size: 20px;
-    font-weight: 800;
-    box-shadow:
-      0 8px 30px rgba(109,93,252,0.35);
-  }
-
-  .mulaqat-brand h1 {
-    margin: 0;
-    font-size: 19px;
-    font-weight: 750;
-  }
-
-  .mulaqat-meeting-id {
-    margin-top: 2px;
-    color: #8f98a8;
-    font-size: 12px;
-  }
-
-  .mulaqat-meeting-id strong {
-    color: #cbd2df;
-    letter-spacing: 0.4px;
-  }
-
-  .mulaqat-header-right {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .mulaqat-status,
-  .mulaqat-count {
-    height: 38px;
-    padding: 0 13px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.08);
-    color: #c6cbd5;
-    font-size: 13px;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #777;
-  }
-
-  .status-dot.online {
-    background: #37d67a;
-    box-shadow: 0 0 12px rgba(55,214,122,0.7);
-  }
-
-  .mulaqat-leave-btn {
-    height: 38px;
-    padding: 0 16px;
-    border: none;
-    border-radius: 10px;
-    background: #e5484d;
-    color: white;
-    font-weight: 650;
-    cursor: pointer;
-    transition: 0.2s ease;
-  }
-
-  .mulaqat-leave-btn:hover {
-    background: #f05a5f;
-    transform: translateY(-1px);
-  }
-
-  .mulaqat-meeting-content {
-    width: min(1600px, 100%);
-    margin: 0 auto;
-    padding: 22px;
-  }
-
-  .mulaqat-video-grid {
-    width: 100%;
-    display: grid;
-    gap: 14px;
-    grid-template-columns:
-      repeat(
-        auto-fit,
-        minmax(300px, 1fr)
-      );
-    align-items: stretch;
-  }
-
-  .mulaqat-video-card {
-    min-width: 0;
-    border-radius: 16px;
-    overflow: hidden;
-    background: #11151b;
-    border: 1px solid rgba(255,255,255,0.09);
-    box-shadow:
-      0 12px 35px rgba(0,0,0,0.24);
-  }
-
-  .mulaqat-video-wrapper {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    overflow: hidden;
-    background: #080a0e;
-  }
-
-  .mulaqat-video-wrapper video {
-    width: 100%;
-    height: 100%;
-    display: block;
-    object-fit: cover;
-    background: #080a0e;
-  }
-
-  .mulaqat-video-placeholder {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    color: #9099a9;
-    font-size: 13px;
-  }
-
-  .mulaqat-avatar {
-    width: 64px;
-    height: 64px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    background: linear-gradient(
-      135deg,
-      #343b49,
-      #1d222b
-    );
-    border: 1px solid rgba(255,255,255,0.12);
-    color: white;
-    font-size: 25px;
-    font-weight: 700;
-  }
-
-  .mulaqat-video-overlay {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(
-        to bottom,
-        rgba(0,0,0,0.05),
-        transparent 55%,
-        rgba(0,0,0,0.65)
-      );
-  }
-
-  .mulaqat-name-badge {
-    position: absolute;
-    left: 12px;
-    bottom: 11px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 10px;
-    border-radius: 9px;
-    background: rgba(0,0,0,0.58);
-    backdrop-filter: blur(8px);
-    color: white;
-    font-size: 12px;
-    font-weight: 600;
-  }
-
-  .mulaqat-live-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #42dc82;
-    box-shadow: 0 0 7px rgba(66,220,130,0.7);
-  }
-
-  .mulaqat-controls {
-    position: fixed;
-    left: 50%;
-    bottom: 22px;
-    transform: translateX(-50%);
-    z-index: 30;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px;
-    border-radius: 18px;
-    background: rgba(20,23,29,0.92);
-    border: 1px solid rgba(255,255,255,0.1);
-    box-shadow:
-      0 18px 50px rgba(0,0,0,0.45);
-    backdrop-filter: blur(18px);
-  }
-
-  .mulaqat-control-btn {
-    min-width: 76px;
-    height: 58px;
-    padding: 7px 12px;
-    border: none;
-    border-radius: 12px;
-    background: rgba(255,255,255,0.07);
-    color: white;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 3px;
-    transition: 0.2s ease;
-  }
-
-  .mulaqat-control-btn:hover {
-    background: rgba(255,255,255,0.13);
-    transform: translateY(-2px);
-  }
-
-  .mulaqat-control-btn span {
-    font-size: 19px;
-  }
-
-  .mulaqat-control-btn small {
-    font-size: 10px;
-    color: #b7becb;
-  }
-
-  .mulaqat-control-btn.disabled {
-    background: #373b43;
-  }
-
-  .mulaqat-control-btn.end {
-    background: #d94348;
-  }
-
-  .mulaqat-control-btn.end:hover {
-    background: #ed555a;
-  }
-
-  .mulaqat-center {
-    display: grid;
-    place-items: center;
-    padding: 20px;
-  }
-
-  .mulaqat-loading-card,
-  .mulaqat-error-card {
-    width: min(420px, 100%);
-    padding: 34px;
-    text-align: center;
-    border-radius: 18px;
-    background: rgba(24,28,35,0.9);
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
-  }
-
-  .mulaqat-loading-card h2,
-  .mulaqat-error-card h2 {
-    margin: 15px 0 8px;
-  }
-
-  .mulaqat-loading-card p,
-  .mulaqat-error-card p {
-    color: #9ba4b3;
-    line-height: 1.5;
-  }
-
-  .mulaqat-spinner {
-    width: 42px;
-    height: 42px;
-    margin: 0 auto;
-    border: 3px solid rgba(255,255,255,0.12);
-    border-top-color: #7b6cff;
-    border-radius: 50%;
-    animation: mulaqat-spin 0.8s linear infinite;
-  }
-
-  @keyframes mulaqat-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .mulaqat-error-icon {
-    width: 48px;
-    height: 48px;
-    margin: 0 auto;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    background: rgba(229,72,77,0.15);
-    color: #ff777b;
-    font-size: 24px;
-    font-weight: 800;
-  }
-
-  .mulaqat-primary-btn {
-    margin-top: 15px;
-    padding: 11px 18px;
-    border: none;
-    border-radius: 10px;
-    background: #6d5dfc;
-    color: white;
-    font-weight: 650;
-    cursor: pointer;
-  }
-
-  @media (max-width: 800px) {
-    .mulaqat-header {
-      height: auto;
-      padding: 14px;
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .mulaqat-header-right {
-      width: 100%;
-    }
-
-    .mulaqat-status,
-    .mulaqat-count {
-      flex: 1;
-      justify-content: center;
-    }
-
-    .mulaqat-leave-btn {
-      flex: 1;
-    }
-
-    .mulaqat-meeting-content {
-      padding: 12px;
-    }
-
-    .mulaqat-video-grid {
-      grid-template-columns:
-        repeat(
-          auto-fit,
-          minmax(220px, 1fr)
-        );
-      gap: 10px;
-    }
-
-    .mulaqat-controls {
-      bottom: 10px;
-      width: calc(100% - 20px);
-      justify-content: center;
-    }
-
-    .mulaqat-control-btn {
-      min-width: 70px;
-    }
-  }
-
-  @media (max-width: 520px) {
-    .mulaqat-video-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .mulaqat-control-btn {
-      min-width: 62px;
-      height: 54px;
-      padding: 5px;
-    }
-
-    .mulaqat-control-btn small {
-      font-size: 9px;
-    }
-  }
-`;
 
 export default Meeting;
