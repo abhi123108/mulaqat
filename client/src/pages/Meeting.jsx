@@ -91,7 +91,14 @@ const Meeting = () => {
 
   const socketRef = useRef(null);
 
+  // Camera + microphone stream
   const localStreamRef = useRef(null);
+
+  // Screen share stream
+  const screenStreamRef = useRef(null);
+
+  // Screen sharing state ref
+  const screenSharingRef = useRef(false);
 
   // socketId -> RTCPeerConnection
   const peerConnectionsRef = useRef(
@@ -114,8 +121,7 @@ const Meeting = () => {
   // Chat scroll
   const chatMessagesRef = useRef(null);
 
-  // IMPORTANT:
-  // Avoid stale chatOpen value inside socket listener.
+  // Avoid stale chatOpen inside socket listener
   const chatOpenRef = useRef(false);
 
   // ====================================================
@@ -124,11 +130,11 @@ const Meeting = () => {
 
   const [meeting, setMeeting] = useState(null);
 
-  const [participants, setParticipants] = useState(
-    []
-  );
+  const [participants, setParticipants] =
+    useState([]);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] =
+    useState(true);
 
   const [cameraReady, setCameraReady] =
     useState(false);
@@ -142,9 +148,14 @@ const Meeting = () => {
   const [cameraEnabled, setCameraEnabled] =
     useState(true);
 
-  const [error, setError] = useState("");
+  const [screenSharing, setScreenSharing] =
+    useState(false);
 
-  const [success, setSuccess] = useState("");
+  const [error, setError] =
+    useState("");
+
+  const [success, setSuccess] =
+    useState("");
 
   // ====================================================
   // CHAT STATE
@@ -178,18 +189,16 @@ const Meeting = () => {
   // LOCAL VIDEO ATTACH
   // ====================================================
   //
-  // IMPORTANT FIX:
-  //
-  // getUserMedia() loading screen ke time complete ho
-  // sakta hai, jab localVideoRef.current null hota hai.
-  //
-  // Ye effect stream ko actual <video> element mount
-  // hone ke baad attach karta hai.
+  // Camera normally shows here.
+  // During screen sharing, screen stream shows here.
   // ====================================================
 
   useEffect(() => {
     const video = localVideoRef.current;
-    const stream = localStreamRef.current;
+
+    const stream = screenSharing
+      ? screenStreamRef.current
+      : localStreamRef.current;
 
     if (!video || !stream) {
       return;
@@ -218,7 +227,7 @@ const Meeting = () => {
         video.srcObject = null;
       }
     };
-  }, [cameraReady]);
+  }, [cameraReady, screenSharing]);
 
   // ====================================================
   // UPDATE PARTICIPANT STREAM
@@ -284,6 +293,46 @@ const Meeting = () => {
     }, []);
 
   // ====================================================
+  // CLEANUP PEER
+  // ====================================================
+
+  const cleanupPeer = useCallback(
+    (socketId) => {
+      const peerConnection =
+        peerConnectionsRef.current.get(
+          socketId
+        );
+
+      if (peerConnection) {
+        peerConnection.ontrack = null;
+
+        peerConnection.onicecandidate =
+          null;
+
+        peerConnection.onconnectionstatechange =
+          null;
+
+        peerConnection.close();
+      }
+
+      peerConnectionsRef.current.delete(
+        socketId
+      );
+
+      pendingIceCandidatesRef.current.delete(
+        socketId
+      );
+
+      remoteStreamsRef.current.delete(
+        socketId
+      );
+
+      removeParticipant(socketId);
+    },
+    [removeParticipant]
+  );
+
+  // ====================================================
   // CREATE PEER CONNECTION
   // ====================================================
 
@@ -313,7 +362,7 @@ const Meeting = () => {
           );
 
         // ==============================================
-        // ADD LOCAL TRACKS
+        // ADD LOCAL CAMERA + MICROPHONE TRACKS
         // ==============================================
 
         const localStream =
@@ -328,6 +377,37 @@ const Meeting = () => {
                 localStream
               );
             });
+        }
+
+        // ==============================================
+        // IF SCREEN SHARING IS ALREADY ACTIVE
+        // ==============================================
+
+        if (screenStreamRef.current) {
+          const screenTrack =
+            screenStreamRef.current.getVideoTracks()[0];
+
+          if (screenTrack) {
+            const videoSender =
+              peerConnection
+                .getSenders()
+                .find(
+                  (sender) =>
+                    sender.track?.kind ===
+                    "video"
+                );
+
+            if (videoSender) {
+              videoSender
+                .replaceTrack(screenTrack)
+                .catch((error) => {
+                  console.error(
+                    "Failed to attach screen track:",
+                    error
+                  );
+                });
+            }
+          }
         }
 
         // ==============================================
@@ -426,6 +506,7 @@ const Meeting = () => {
       },
       [
         updateParticipantStream,
+        cleanupPeer,
       ]
     );
 
@@ -490,7 +571,7 @@ const Meeting = () => {
           return;
         }
 
-        // Avoid creating duplicate offer
+        // Avoid duplicate offer
         if (
           peerConnection.signalingState !==
           "stable"
@@ -780,56 +861,226 @@ const Meeting = () => {
     }, []);
 
   // ====================================================
-  // CLEANUP PEER
+  // SCREEN SHARING
   // ====================================================
 
-  const cleanupPeer = useCallback(
-    (socketId) => {
-      const peerConnection =
-        peerConnectionsRef.current.get(
-          socketId
-        );
+  const stopScreenShare = useCallback(() => {
+    const cameraStream =
+      localStreamRef.current;
 
-      if (peerConnection) {
-        peerConnection.ontrack = null;
+    const cameraTrack =
+      cameraStream?.getVideoTracks()[0];
 
-        peerConnection.onicecandidate =
-          null;
+    // Restore camera track for every peer
+    peerConnectionsRef.current.forEach(
+      (peerConnection, socketId) => {
+        const videoSender =
+          peerConnection
+            .getSenders()
+            .find(
+              (sender) =>
+                sender.track?.kind ===
+                "video"
+            );
 
-        peerConnection.onconnectionstatechange =
-          null;
+        if (
+          !videoSender ||
+          !cameraTrack
+        ) {
+          return;
+        }
 
-        peerConnection.close();
+        videoSender
+          .replaceTrack(cameraTrack)
+          .then(() => {
+            console.log(
+              `Camera restored for ${socketId}`
+            );
+          })
+          .catch((error) => {
+            console.error(
+              `Failed to restore camera for ${socketId}:`,
+              error
+            );
+          });
+      }
+    );
+
+    // Stop screen capture tracks
+    if (screenStreamRef.current) {
+      screenStreamRef.current
+        .getTracks()
+        .forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+
+      screenStreamRef.current = null;
+    }
+
+    screenSharingRef.current = false;
+    setScreenSharing(false);
+
+    // Restore camera enabled state
+    if (cameraTrack) {
+      cameraTrack.enabled =
+        cameraEnabled;
+    }
+
+    setSuccess(
+      "Screen sharing stopped."
+    );
+  }, [cameraEnabled]);
+
+  const toggleScreenShare =
+    useCallback(async () => {
+      if (screenSharingRef.current) {
+        stopScreenShare();
+        return;
       }
 
-      peerConnectionsRef.current.delete(
-        socketId
-      );
+      try {
+        if (
+          !navigator.mediaDevices ||
+          !navigator.mediaDevices
+            .getDisplayMedia
+        ) {
+          setError(
+            "Screen sharing is not supported by this browser."
+          );
+          return;
+        }
 
-      pendingIceCandidatesRef.current.delete(
-        socketId
-      );
+        const screenStream =
+          await navigator.mediaDevices.getDisplayMedia(
+            {
+              video: {
+                cursor: "always",
+              },
+              audio: false,
+            }
+          );
 
-      remoteStreamsRef.current.delete(
-        socketId
-      );
+        const screenTrack =
+          screenStream.getVideoTracks()[0];
 
-      removeParticipant(socketId);
-    },
-    [removeParticipant]
-  );
+        if (!screenTrack) {
+          screenStream
+            .getTracks()
+            .forEach((track) =>
+              track.stop()
+            );
+
+          setError(
+            "Unable to capture your screen."
+          );
+          return;
+        }
+
+        screenStreamRef.current =
+          screenStream;
+
+        screenSharingRef.current =
+          true;
+
+        // Replace camera video track
+        // with screen video track
+        peerConnectionsRef.current.forEach(
+          (
+            peerConnection,
+            socketId
+          ) => {
+            const videoSender =
+              peerConnection
+                .getSenders()
+                .find(
+                  (sender) =>
+                    sender.track?.kind ===
+                    "video"
+                );
+
+            if (!videoSender) {
+              console.warn(
+                "Video sender not found for:",
+                socketId
+              );
+              return;
+            }
+
+            videoSender
+              .replaceTrack(screenTrack)
+              .then(() => {
+                console.log(
+                  `Screen track attached to ${socketId}`
+                );
+              })
+              .catch((error) => {
+                console.error(
+                  `Failed to replace video track for ${socketId}:`,
+                  error
+                );
+              });
+          }
+        );
+
+        setScreenSharing(true);
+        setSuccess(
+          "Screen sharing started."
+        );
+
+        // Browser native
+        // "Stop sharing" button
+        screenTrack.onended = () => {
+          stopScreenShare();
+        };
+      } catch (error) {
+        console.error(
+          "Screen sharing failed:",
+          error
+        );
+
+        if (
+          error.name ===
+          "NotAllowedError"
+        ) {
+          setError(
+            "Screen sharing was cancelled."
+          );
+        } else {
+          setError(
+            "Unable to start screen sharing."
+          );
+        }
+      }
+    }, [stopScreenShare]);
 
   // ====================================================
   // CLEANUP EVERYTHING
   // ====================================================
 
   const cleanup = useCallback(() => {
+    // Stop screen sharing first
+    if (screenStreamRef.current) {
+      screenStreamRef.current
+        .getTracks()
+        .forEach((track) => {
+          track.onended = null;
+          track.stop();
+        });
+
+      screenStreamRef.current = null;
+    }
+
+    screenSharingRef.current = false;
+
     // Close all peer connections
     peerConnectionsRef.current.forEach(
       (peerConnection) => {
         peerConnection.ontrack = null;
+
         peerConnection.onicecandidate =
           null;
+
         peerConnection.onconnectionstatechange =
           null;
 
@@ -866,6 +1117,8 @@ const Meeting = () => {
     setCameraReady(false);
 
     setConnected(false);
+
+    setScreenSharing(false);
 
     setChatOpen(false);
 
@@ -1146,7 +1399,9 @@ const Meeting = () => {
               });
 
               // Only unread when chat is closed
-              if (!chatOpenRef.current) {
+              if (
+                !chatOpenRef.current
+              ) {
                 setUnreadCount(
                   (current) =>
                     current + 1
@@ -1331,8 +1586,8 @@ const Meeting = () => {
 
       cleanup();
 
-      // Only disconnect the socket that belongs
-      // to this initialization.
+      // Only disconnect the socket
+      // that belongs to this initialization.
       if (
         activeSocket &&
         socketRef.current ===
@@ -1740,6 +1995,11 @@ const Meeting = () => {
           border-color: #991b1b;
         }
 
+        .screen-share-active {
+          background: #166534 !important;
+          border-color: #16a34a !important;
+        }
+
         .chat-panel {
           width: 340px;
           flex-shrink: 0;
@@ -2072,7 +2332,9 @@ const Meeting = () => {
                   />
 
                   <div className="video-label">
-                    You
+                    {screenSharing
+                      ? "You • Screen"
+                      : "You"}
                   </div>
                 </div>
 
@@ -2137,7 +2399,25 @@ const Meeting = () => {
                     : "📷 Camera On"}
                 </button>
 
-                {/* Only ONE Chat button */}
+                {/* SCREEN SHARE */}
+
+                <button
+                  onClick={
+                    toggleScreenShare
+                  }
+                  className={`control-button ${
+                    screenSharing
+                      ? "screen-share-active"
+                      : "active"
+                  }`}
+                >
+                  {screenSharing
+                    ? "🛑 Stop Sharing"
+                    : "🖥️ Share Screen"}
+                </button>
+
+                {/* ONLY ONE CHAT BUTTON */}
+
                 <button
                   onClick={toggleChat}
                   className="control-button"
@@ -2150,7 +2430,6 @@ const Meeting = () => {
                     </span>
                   )}
                 </button>
-
               </div>
             </div>
 
@@ -2313,7 +2592,6 @@ const Meeting = () => {
                 </div>
               </aside>
             )}
-
           </div>
         </div>
       </div>
