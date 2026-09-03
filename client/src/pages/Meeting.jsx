@@ -143,6 +143,9 @@ const Meeting = () => {
   const [connected, setConnected] =
     useState(false);
 
+  const [connectionStatus, setConnectionStatus] =
+    useState("connecting");
+
   const [micEnabled, setMicEnabled] =
     useState(true);
 
@@ -1291,6 +1294,9 @@ const Meeting = () => {
               );
 
               setConnected(true);
+              setConnectionStatus("connected");
+
+              setError("");
 
               socket.emit(
                 "join-room",
@@ -1313,6 +1319,7 @@ const Meeting = () => {
 
               if (!cancelled) {
                 setConnected(false);
+                setConnectionStatus("reconnecting");
               }
             };
 
@@ -1328,10 +1335,8 @@ const Meeting = () => {
               );
 
               if (!cancelled) {
-                setError(
-                  socketError.message ||
-                    "Unable to connect to meeting server."
-                );
+                setConnected(false);
+                setConnectionStatus("reconnecting");
               }
             };
 
@@ -2033,9 +2038,17 @@ const Meeting = () => {
         }
 
         .meeting-status {
-          color: #86efac;
           font-size: 13px;
           font-weight: 600;
+        }
+
+        .meeting-status.connected {
+          color: #86efac;
+        }
+
+        .meeting-status.connecting,
+        .meeting-status.reconnecting {
+          color: #facc15;
         }
 
         .header-actions {
@@ -2416,13 +2429,25 @@ const Meeting = () => {
                 </strong>
               </p>
 
-              <p className="meeting-status">
-                {connected
-                  ? `● Connected • ${
-                      participants.length +
-                      1
-                    } participants`
-                  : "● Connecting..."}
+              <p
+                className={`meeting-status ${
+                  connectionStatus
+                }`}
+              >
+                {connectionStatus ===
+                  "connected" &&
+                  `● Connected • ${
+                    participants.length +
+                    1
+                  } participants`}
+
+                {connectionStatus ===
+                  "connecting" &&
+                  "● Connecting..."}
+
+                {connectionStatus ===
+                  "reconnecting" &&
+                  "● Connection lost • Reconnecting..."}
               </p>
             </div>
 
