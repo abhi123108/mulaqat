@@ -26,7 +26,7 @@ const ICE_SERVERS = {
 // REMOTE VIDEO
 // ======================================================
 
-const RemoteVideo = ({ participant }) => {
+const RemoteVideo = ({ participant, isHost = false }) => {
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -67,9 +67,10 @@ const RemoteVideo = ({ participant }) => {
       />
 
       <div className="video-label">
-        User{" "}
-        {participant.userId?.slice(-6) ||
-          participant.socketId?.slice(-6)}
+        {isHost ? "Host" : "User"}{" "}
+        {!isHost &&
+          (participant.userId?.slice(-6) ||
+            participant.socketId?.slice(-6))}
       </div>
     </div>
   );
@@ -151,6 +152,12 @@ const Meeting = () => {
   const [screenSharing, setScreenSharing] =
     useState(false);
 
+  const [meetingEnded, setMeetingEnded] =
+    useState(false);
+
+  const [endingMeeting, setEndingMeeting] =
+    useState(false);
+
   const [error, setError] =
     useState("");
 
@@ -184,6 +191,35 @@ const Meeting = () => {
       setUnreadCount(0);
     }
   }, [chatOpen]);
+
+  // ====================================================
+  // CURRENT USER / HOST DETECTION
+  // ====================================================
+
+  const getCurrentUserId = () => {
+    try {
+      const token = localStorage.getItem("mulaqat_token");
+
+      if (!token) {
+        return null;
+      }
+
+      const payload = JSON.parse(
+        atob(token.split(".")[1])
+      );
+
+      return payload.userId || null;
+    } catch (error) {
+      console.error("Failed to decode user token:", error);
+      return null;
+    }
+  };
+
+  const currentUserId = getCurrentUserId();
+
+  const isHost =
+    meeting?.host?.toString() ===
+    currentUserId?.toString();
 
   // ====================================================
   // LOCAL VIDEO ATTACH
@@ -1185,6 +1221,12 @@ const Meeting = () => {
 
           setMeeting(meetingData);
 
+          // Do not allow users to enter an ended meeting.
+          if (meetingData.status === "ended") {
+            setMeetingEnded(true);
+            return;
+          }
+
           // ============================================
           // CAMERA
           // ============================================
@@ -1366,6 +1408,30 @@ const Meeting = () => {
             };
 
           // ============================================
+          // MEETING ENDED
+          // ============================================
+
+          const handleMeetingEnded = (data) => {
+            if (cancelled) {
+              return;
+            }
+
+            console.log("Meeting ended:", data);
+
+            setMeetingEnded(true);
+            setEndingMeeting(false);
+            setSuccess("This meeting has ended.");
+
+            cleanup();
+
+            if (socketRef.current === socket) {
+              socketRef.current = null;
+            }
+
+            disconnectSocket();
+          };
+
+          // ============================================
           // CHAT MESSAGE
           // ============================================
 
@@ -1481,6 +1547,11 @@ const Meeting = () => {
           );
 
           socket.on(
+            "meeting-ended",
+            handleMeetingEnded
+          );
+
+          socket.on(
             "chat-message",
             handleChatMessage
           );
@@ -1573,6 +1644,10 @@ const Meeting = () => {
 
         activeSocket.off(
           "user-left"
+        );
+
+        activeSocket.off(
+          "meeting-ended"
         );
 
         activeSocket.off(
@@ -1758,18 +1833,94 @@ const Meeting = () => {
   };
 
   // ====================================================
-  // END CALL
+  // LEAVE MEETING (NON-HOST)
   // ====================================================
 
-  const handleEndCall = () => {
+  const handleLeaveMeeting = () => {
+    const socket = socketRef.current;
+
+    if (socket?.connected) {
+      socket.emit("leave-room", { meetingId });
+    }
+
     cleanup();
-
     disconnectSocket();
-
     socketRef.current = null;
-
     navigate("/");
   };
+
+  // ====================================================
+  // END MEETING (HOST ONLY)
+  // ====================================================
+
+  const handleEndMeeting = async () => {
+    if (endingMeeting || meetingEnded) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to end this meeting for everyone?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setEndingMeeting(true);
+      setError("");
+      setSuccess("Ending meeting...");
+
+      await api.post(`/meetings/${meetingId}/end`);
+
+      const socket = socketRef.current;
+
+      if (socket?.connected) {
+        // Server broadcasts meeting-ended to every participant.
+        socket.emit("end-meeting", { meetingId });
+      } else {
+        // Fallback if socket has already disconnected.
+        setMeetingEnded(true);
+        cleanup();
+        disconnectSocket();
+        socketRef.current = null;
+      }
+    } catch (error) {
+      console.error("End meeting error:", error);
+
+      setEndingMeeting(false);
+      setSuccess("");
+      setError(
+        error.response?.data?.message ||
+          "Failed to end meeting."
+      );
+    }
+  };
+
+  // ====================================================
+  // MEETING ENDED
+  // ====================================================
+
+  if (meetingEnded) {
+    return (
+      <div className="meeting-state">
+        <div>
+          <h2>Meeting Ended</h2>
+          <p>
+            {isHost
+              ? "You ended this meeting for everyone."
+              : "The host has ended this meeting."}
+          </p>
+          <button
+            onClick={() => navigate("/")}
+            className="primary-button"
+          >
+            Back to Home
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ====================================================
   // LOADING
@@ -2291,12 +2442,24 @@ const Meeting = () => {
                 )}
               </button>
 
-              <button
-                className="leave-button"
-                onClick={handleEndCall}
-              >
-                Leave
-              </button>
+              {isHost ? (
+                <button
+                  className="leave-button"
+                  onClick={handleEndMeeting}
+                  disabled={endingMeeting}
+                >
+                  {endingMeeting
+                    ? "Ending..."
+                    : "End Meeting"}
+                </button>
+              ) : (
+                <button
+                  className="leave-button"
+                  onClick={handleLeaveMeeting}
+                >
+                  Leave Meeting
+                </button>
+              )}
             </div>
           </div>
 
@@ -2333,8 +2496,12 @@ const Meeting = () => {
 
                   <div className="video-label">
                     {screenSharing
-                      ? "You • Screen"
-                      : "You"}
+                      ? isHost
+                        ? "You • Host • Screen"
+                        : "You • Screen"
+                      : isHost
+                        ? "You • Host"
+                        : "You"}
                   </div>
                 </div>
 
@@ -2350,6 +2517,10 @@ const Meeting = () => {
                       }
                       participant={
                         participant
+                      }
+                      isHost={
+                        meeting?.host?.toString() ===
+                        participant.userId?.toString()
                       }
                     />
                   )

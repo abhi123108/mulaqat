@@ -11,6 +11,7 @@ import Meeting from "./pages/Meeting";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleCallback from "./pages/GoogleCallback";
+import History from "./pages/History";
 
 function App() {
   return (
@@ -34,6 +35,11 @@ function App() {
         <Route
           path="/meeting/:meetingId"
           element={<Meeting />}
+        />
+
+        <Route
+          path="/history"
+          element={<History />}
         />
 
         <Route

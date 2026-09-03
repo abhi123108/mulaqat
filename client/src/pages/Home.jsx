@@ -150,6 +150,10 @@ const handleJoinMeeting = async (event) => {
         Logout
       </button>
 
+      <button onClick={() => navigate("/history")}>
+  Meeting History
+</button>
+
       <hr />
 
       {/* ==============================
