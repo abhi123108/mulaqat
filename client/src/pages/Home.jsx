@@ -6,6 +6,7 @@ const Home = () => {
   const navigate = useNavigate();
 
   const [meetingCode, setMeetingCode] = useState("");
+  const [meetingCreated, setMeetingCreated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [joinLoading, setJoinLoading] = useState(false);
 
@@ -91,11 +92,9 @@ const Home = () => {
         );
       }
 
-      setSuccess("Meeting created successfully.");
-
-      setTimeout(() => {
-        navigate(`/meeting/${meetingId}`);
-      }, 350);
+      setMeetingCode(meetingId);
+      setMeetingCreated(true);
+      setSuccess(`Meeting created successfully. Meeting ID: ${meetingId}`);
     } catch (err) {
       console.error(
         "Create meeting error:",
@@ -108,6 +107,23 @@ const Home = () => {
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  // =====================================================
+  // COPY CREATED MEETING ID
+  // =====================================================
+
+  const handleCopyMeeting = async () => {
+    if (!meetingCode) return;
+
+    try {
+      await navigator.clipboard.writeText(meetingCode);
+      setError("");
+      setSuccess("Meeting ID copied.");
+    } catch (err) {
+      console.error("Copy meeting error:", err);
+      setError("Unable to copy meeting ID. Please copy it manually.");
     }
   };
 
@@ -2345,104 +2361,159 @@ const Home = () => {
 
             </div>
 
-            {/* CREATE */}
+            {meetingCreated ? (
 
-            <button
-              type="button"
-              className="create-button"
-              onClick={handleCreateMeeting}
-              disabled={loading}
-            >
+              <div className="join-box">
 
-              <div className="create-icon">
-                +
-              </div>
+                <div className="join-heading">
 
-              <div className="create-copy">
+                  <div className="join-icon">
+                    ✓
+                  </div>
 
-                <strong>
-                  {loading
-                    ? "Creating..."
-                    : "Create New Meeting"}
-                </strong>
+                  <div>
 
-                <span>
-                  Start an instant video call
-                </span>
+                    <strong>
+                      Meeting Created
+                    </strong>
 
-              </div>
+                    <span>
+                      {meetingCode}
+                    </span>
 
-              <div className="arrow">
-                →
-              </div>
+                  </div>
 
-            </button>
-
-            {/* OR */}
-
-            <div className="or-divider">
-              OR
-            </div>
-
-            {/* JOIN */}
-
-            <div className="join-box">
-
-              <div className="join-heading">
-
-                <div className="join-icon">
-                  ↗
                 </div>
 
-                <div>
+                <div className="join-form">
 
-                  <strong>
-                    Join a Meeting
-                  </strong>
+                  <button
+                    type="button"
+                    className="join-button"
+                    onClick={handleCopyMeeting}
+                  >
+                    Copy Meeting
+                  </button>
 
-                  <span>
-                    Enter meeting ID to join
-                  </span>
+                  <button
+                    type="button"
+                    className="join-button"
+                    onClick={() => handleJoinMeeting()}
+                    disabled={joinLoading}
+                  >
+                    {joinLoading ? "..." : "Join Meeting"}
+                  </button>
 
                 </div>
 
               </div>
 
-              <form
-                className="join-form"
-                onSubmit={handleJoinMeeting}
-              >
+            ) : (
 
-                <input
-                  className="meeting-input"
-                  value={meetingCode}
-                  onChange={(event) =>
-                    setMeetingCode(
-                      event.target.value.toUpperCase()
-                    )
-                  }
-                  placeholder="MUL-XXXXXXXX"
-                  maxLength={20}
-                  autoComplete="off"
-                  spellCheck="false"
-                />
+              <>
+
+                {/* CREATE */}
 
                 <button
-                  type="submit"
-                  className="join-button"
-                  disabled={
-                    joinLoading ||
-                    !meetingCode.trim()
-                  }
+                  type="button"
+                  className="create-button"
+                  onClick={handleCreateMeeting}
+                  disabled={loading}
                 >
-                  {joinLoading
-                    ? "..."
-                    : "Join"}
+
+                  <div className="create-icon">
+                    +
+                  </div>
+
+                  <div className="create-copy">
+
+                    <strong>
+                      {loading
+                        ? "Creating..."
+                        : "Create New Meeting"}
+                    </strong>
+
+                    <span>
+                      Start an instant video call
+                    </span>
+
+                  </div>
+
+                  <div className="arrow">
+                    →
+                  </div>
+
                 </button>
 
-              </form>
+                {/* OR */}
 
-            </div>
+                <div className="or-divider">
+                  OR
+                </div>
+
+                {/* JOIN */}
+
+                <div className="join-box">
+
+                  <div className="join-heading">
+
+                    <div className="join-icon">
+                      ↗
+                    </div>
+
+                    <div>
+
+                      <strong>
+                        Join a Meeting
+                      </strong>
+
+                      <span>
+                        Enter meeting ID to join
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  <form
+                    className="join-form"
+                    onSubmit={handleJoinMeeting}
+                  >
+
+                    <input
+                      className="meeting-input"
+                      value={meetingCode}
+                      onChange={(event) =>
+                        setMeetingCode(
+                          event.target.value.toUpperCase()
+                        )
+                      }
+                      placeholder="MUL-XXXXXXXX"
+                      maxLength={20}
+                      autoComplete="off"
+                      spellCheck="false"
+                    />
+
+                    <button
+                      type="submit"
+                      className="join-button"
+                      disabled={
+                        joinLoading ||
+                        !meetingCode.trim()
+                      }
+                    >
+                      {joinLoading
+                        ? "..."
+                        : "Join"}
+                    </button>
+
+                  </form>
+
+                </div>
+
+              </>
+
+            )}
 
             {/* PRIVACY */}
 
