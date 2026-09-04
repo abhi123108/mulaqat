@@ -15,6 +15,8 @@ const Home = () => {
 
   const [meetings, setMeetings] = useState([]);
   const [userName, setUserName] = useState("Mulaqat User");
+  const [userAvatar, setUserAvatar] = useState("");
+  const [avatarError, setAvatarError] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // =====================================================
@@ -61,6 +63,44 @@ const Home = () => {
           "Failed to read user information:",
           err
         );
+      }
+
+      // Load latest profile data so the real name and profile photo stay in sync.
+      try {
+        const response = await api.get("/auth/me");
+        const user = response.data?.user;
+
+        if (user) {
+          setUserName(
+            user.name ||
+              user.email?.split("@")[0] ||
+              "Mulaqat User"
+          );
+          setUserAvatar(user.avatar || "");
+          setAvatarError(false);
+          localStorage.setItem("mulaqat_user", JSON.stringify(user));
+        }
+      } catch (err) {
+        console.error(
+          "Failed to fetch current user profile:",
+          err
+        );
+
+        // Fall back to the cached user if /auth/me is unavailable.
+        try {
+          const storedUser = localStorage.getItem("mulaqat_user");
+          if (storedUser) {
+            const user = JSON.parse(storedUser);
+            setUserName(
+              user.name ||
+                user.email?.split("@")[0] ||
+                "Mulaqat User"
+            );
+            setUserAvatar(user.avatar || "");
+          }
+        } catch (storageError) {
+          console.error("Failed to read cached user:", storageError);
+        }
       }
     };
 
@@ -265,6 +305,12 @@ const Home = () => {
 
   const avatarLetter =
     userName?.charAt(0)?.toUpperCase() || "M";
+
+  const avatarUrl = userAvatar
+    ? (userAvatar.startsWith("http") || userAvatar.startsWith("data:image/"))
+      ? userAvatar
+      : `http://localhost:5000${userAvatar}`
+    : "";
 
   // =====================================================
   // UI
@@ -627,6 +673,14 @@ const Home = () => {
             rgba(75,92,255,0.30);
         }
 
+        .avatar-image {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
+          border-radius: 50%;
+        }
+
         .avatar::after {
           content: "";
 
@@ -813,7 +867,6 @@ const Home = () => {
           background:
             rgba(244,63,94,0.09) !important;
         }
-
         /* =====================================================
            MAIN
         ===================================================== */
@@ -2142,7 +2195,16 @@ const Home = () => {
           >
 
             <div className="avatar">
-              {avatarLetter}
+              {avatarUrl && !avatarError ? (
+                <img
+                  src={avatarUrl}
+                  alt={userName}
+                  className="avatar-image"
+                  onError={() => setAvatarError(true)}
+                />
+              ) : (
+                avatarLetter
+              )}
             </div>
 
             <span className="user-name">
@@ -2182,6 +2244,16 @@ const Home = () => {
                 }}
               >
                 ◷ &nbsp; Meeting history
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  navigate("/settings");
+                }}
+              >
+                ⚙ &nbsp; Settings
               </button>
 
               <button

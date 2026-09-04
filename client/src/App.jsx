@@ -12,6 +12,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleCallback from "./pages/GoogleCallback";
 import History from "./pages/History";
+import Settings from "./pages/Settings";
 
 function App() {
   return (
@@ -56,6 +57,9 @@ function App() {
           path="/auth/google/callback"
           element={<GoogleCallback />}
         />
+
+        <Route path="/settings" element={<Settings />} />
+        
       </Routes>
     </BrowserRouter>
   );

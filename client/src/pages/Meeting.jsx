@@ -1907,47 +1907,610 @@ const Meeting = () => {
   // ====================================================
 
   if (meetingEnded) {
-    return (
-      <div className="meeting-state">
-        <div>
-          <h2>Meeting Ended</h2>
-          <p>
-            {isHost
-              ? "You ended this meeting for everyone."
-              : "The host has ended this meeting."}
-          </p>
-          <button
-            onClick={() => navigate("/")}
-            className="primary-button"
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        background:
+          "radial-gradient(circle at top left, #172554 0%, #0b1020 38%, #050811 100%)",
+        color: "#f8fafc",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        fontFamily:
+          'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* Background glow */}
+      <div
+        style={{
+          position: "absolute",
+          width: "420px",
+          height: "420px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(79,70,229,0.18), transparent 68%)",
+          top: "-180px",
+          left: "-120px",
+          pointerEvents: "none",
+        }}
+      />
+
+      <div
+        style={{
+          position: "absolute",
+          width: "360px",
+          height: "360px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(14,165,233,0.12), transparent 68%)",
+          bottom: "-160px",
+          right: "-100px",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Main Card */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "560px",
+          background: "rgba(15, 23, 42, 0.88)",
+          border: "1px solid rgba(148, 163, 184, 0.16)",
+          borderRadius: "24px",
+          padding: "48px 42px",
+          textAlign: "center",
+          boxShadow:
+            "0 25px 80px rgba(0, 0, 0, 0.45)",
+          backdropFilter: "blur(18px)",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
+        {/* Brand */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: "32px",
+          }}
+        >
+          <img
+            src="/mulaqat-logo-horizontal.png"
+            alt="Mulaqat"
+            style={{
+              width: "150px",
+              height: "auto",
+              objectFit: "contain",
+            }}
+          />
+        </div>
+
+        {/* Success Icon */}
+        <div
+          style={{
+            width: "82px",
+            height: "82px",
+            borderRadius: "50%",
+            margin: "0 auto 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background:
+              "linear-gradient(145deg, rgba(34,197,94,0.16), rgba(16,185,129,0.05))",
+            border: "1px solid rgba(34,197,94,0.28)",
+            boxShadow:
+              "0 0 40px rgba(34,197,94,0.10)",
+          }}
+        >
+          <div
+            style={{
+              width: "52px",
+              height: "52px",
+              borderRadius: "50%",
+              background:
+                "linear-gradient(135deg, #22c55e, #10b981)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#ffffff",
+              fontSize: "27px",
+              fontWeight: "800",
+              boxShadow:
+                "0 8px 24px rgba(34,197,94,0.25)",
+            }}
           >
-            Back to Home
-          </button>
+            ✓
+          </div>
+        </div>
+
+        {/* Eyebrow */}
+        <div
+          style={{
+            fontSize: "12px",
+            fontWeight: "700",
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "#60a5fa",
+            marginBottom: "12px",
+          }}
+        >
+          SESSION COMPLETE
+        </div>
+
+        {/* Heading */}
+        <h1
+          style={{
+            margin: "0 0 12px",
+            fontSize: "32px",
+            lineHeight: "1.2",
+            fontWeight: "750",
+            letterSpacing: "-0.025em",
+            color: "#f8fafc",
+          }}
+        >
+          Meeting Ended
+        </h1>
+
+        {/* Description */}
+        <p
+          style={{
+            margin: "0 auto",
+            maxWidth: "410px",
+            fontSize: "15px",
+            lineHeight: "1.7",
+            color: "#94a3b8",
+          }}
+        >
+          {isHost
+            ? "You ended this meeting for everyone. All participants have been disconnected."
+            : "The host has ended this meeting. The meeting room is no longer available."}
+        </p>
+
+        {/* Meeting ID */}
+        <div
+          style={{
+            marginTop: "28px",
+            padding: "15px 18px",
+            borderRadius: "14px",
+            background: "rgba(30, 41, 59, 0.65)",
+            border: "1px solid rgba(148, 163, 184, 0.12)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "16px",
+            textAlign: "left",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: "11px",
+                fontWeight: "700",
+                color: "#64748b",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                marginBottom: "5px",
+              }}
+            >
+              Meeting ID
+            </div>
+
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: "650",
+                color: "#cbd5e1",
+                letterSpacing: "0.04em",
+              }}
+            >
+              {meetingId}
+            </div>
+          </div>
+
+          <div
+            style={{
+              width: "34px",
+              height: "34px",
+              borderRadius: "10px",
+              background: "rgba(59,130,246,0.1)",
+              border: "1px solid rgba(59,130,246,0.18)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#60a5fa",
+              fontSize: "16px",
+            }}
+          >
+            #
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div
+          style={{
+            height: "1px",
+            background:
+              "linear-gradient(90deg, transparent, rgba(148,163,184,0.15), transparent)",
+            margin: "30px 0",
+          }}
+        />
+
+        {/* Action */}
+        <button
+          type="button"
+          onClick={() => navigate("/")}
+          style={{
+            width: "100%",
+            border: "none",
+            borderRadius: "13px",
+            padding: "14px 20px",
+            background:
+              "linear-gradient(135deg, #4f46e5, #2563eb)",
+            color: "#ffffff",
+            fontSize: "14px",
+            fontWeight: "700",
+            cursor: "pointer",
+            boxShadow:
+              "0 10px 28px rgba(37,99,235,0.24)",
+            transition:
+              "transform 0.2s ease, box-shadow 0.2s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform =
+              "translateY(-1px)";
+            e.currentTarget.style.boxShadow =
+              "0 14px 34px rgba(37,99,235,0.32)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform =
+              "translateY(0)";
+            e.currentTarget.style.boxShadow =
+              "0 10px 28px rgba(37,99,235,0.24)";
+          }}
+        >
+          ← Back to Home
+        </button>
+
+        {/* Footer */}
+        <div
+          style={{
+            marginTop: "22px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "7px",
+            color: "#64748b",
+            fontSize: "12px",
+          }}
+        >
+          <span
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: "#22c55e",
+            }}
+          />
+          Your meeting session has been securely closed
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   // ====================================================
   // LOADING
   // ====================================================
 
   if (loading) {
-    return (
-      <div className="meeting-state">
-        <div>
-          <h2>
-            Joining meeting...
-          </h2>
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        background:
+          "radial-gradient(circle at 15% 10%, rgba(37, 99, 235, 0.16), transparent 32%), radial-gradient(circle at 85% 90%, rgba(79, 70, 229, 0.14), transparent 30%), #050811",
+        color: "#f8fafc",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+        fontFamily:
+          'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* Background glow */}
+      <div
+        style={{
+          position: "absolute",
+          width: "500px",
+          height: "500px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(59,130,246,0.10), transparent 68%)",
+          top: "-260px",
+          left: "-180px",
+          pointerEvents: "none",
+        }}
+      />
 
-          <p>
-            Please allow camera and
-            microphone access.
-          </p>
+      <div
+        style={{
+          position: "absolute",
+          width: "420px",
+          height: "420px",
+          borderRadius: "50%",
+          background:
+            "radial-gradient(circle, rgba(99,102,241,0.10), transparent 68%)",
+          bottom: "-230px",
+          right: "-150px",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Loading Card */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "480px",
+          padding: "46px 40px",
+          borderRadius: "24px",
+          background: "rgba(15, 23, 42, 0.88)",
+          border: "1px solid rgba(148, 163, 184, 0.14)",
+          boxShadow:
+            "0 30px 90px rgba(0, 0, 0, 0.45)",
+          backdropFilter: "blur(18px)",
+          textAlign: "center",
+          position: "relative",
+          zIndex: 1,
+        }}
+      >
+        {/* Logo */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: "34px",
+          }}
+        >
+          <img
+            src="/mulaqat-logo-horizontal.png"
+            alt="Mulaqat"
+            style={{
+              width: "145px",
+              height: "auto",
+              objectFit: "contain",
+            }}
+          />
+        </div>
+
+        {/* Spinner */}
+        <div
+          style={{
+            width: "72px",
+            height: "72px",
+            margin: "0 auto 26px",
+            borderRadius: "50%",
+            border: "3px solid rgba(96, 165, 250, 0.12)",
+            borderTopColor: "#60a5fa",
+            borderRightColor: "#6366f1",
+            animation: "mulaqatSpin 1s linear infinite",
+            boxShadow:
+              "0 0 35px rgba(59,130,246,0.12)",
+          }}
+        />
+
+        {/* Status */}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "7px",
+            padding: "7px 13px",
+            borderRadius: "999px",
+            background: "rgba(59,130,246,0.08)",
+            border: "1px solid rgba(59,130,246,0.18)",
+            color: "#60a5fa",
+            fontSize: "11px",
+            fontWeight: "700",
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            marginBottom: "15px",
+          }}
+        >
+          <span
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: "#60a5fa",
+              boxShadow:
+                "0 0 10px rgba(96,165,250,0.8)",
+            }}
+          />
+          Secure Connection
+        </div>
+
+        {/* Heading */}
+        <h1
+          style={{
+            margin: "0 0 12px",
+            fontSize: "30px",
+            lineHeight: "1.2",
+            fontWeight: "750",
+            letterSpacing: "-0.025em",
+            color: "#f8fafc",
+          }}
+        >
+          Joining meeting…
+        </h1>
+
+        {/* Description */}
+        <p
+          style={{
+            margin: "0 auto",
+            maxWidth: "350px",
+            color: "#94a3b8",
+            fontSize: "14px",
+            lineHeight: "1.7",
+          }}
+        >
+          Please allow camera and microphone access
+          when your browser asks for permission.
+        </p>
+
+        {/* Meeting ID */}
+        <div
+          style={{
+            marginTop: "28px",
+            padding: "14px 16px",
+            borderRadius: "13px",
+            background: "rgba(30, 41, 59, 0.58)",
+            border:
+              "1px solid rgba(148, 163, 184, 0.10)",
+            textAlign: "left",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "10px",
+              fontWeight: "700",
+              color: "#64748b",
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+              marginBottom: "6px",
+            }}
+          >
+            Meeting ID
+          </div>
+
+          <div
+            style={{
+              fontSize: "14px",
+              fontWeight: "650",
+              color: "#cbd5e1",
+              letterSpacing: "0.04em",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {meetingId}
+          </div>
+        </div>
+
+        {/* Connection steps */}
+        <div
+          style={{
+            marginTop: "26px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "11px",
+            textAlign: "left",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "11px",
+              color: "#cbd5e1",
+              fontSize: "12px",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#22c55e",
+                boxShadow:
+                  "0 0 10px rgba(34,197,94,0.45)",
+              }}
+            />
+            Connecting securely
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "11px",
+              color: "#64748b",
+              fontSize: "12px",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                border:
+                  "1px solid rgba(148,163,184,0.35)",
+              }}
+            />
+            Initializing camera & microphone
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "11px",
+              color: "#64748b",
+              fontSize: "12px",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                border:
+                  "1px solid rgba(148,163,184,0.35)",
+                borderRadius: "50%",
+              }}
+            />
+            Preparing your meeting room
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            marginTop: "28px",
+            paddingTop: "20px",
+            borderTop:
+              "1px solid rgba(148,163,184,0.09)",
+            color: "#475569",
+            fontSize: "11px",
+          }}
+        >
+          🔒 Your connection is private and encrypted
         </div>
       </div>
-    );
-  }
 
+      <style>
+        {`
+          @keyframes mulaqatSpin {
+            from {
+              transform: rotate(0deg);
+            }
+            to {
+              transform: rotate(360deg);
+            }
+          }
+        `}
+      </style>
+    </div>
+  );
+}
   // ====================================================
   // ERROR
   // ====================================================

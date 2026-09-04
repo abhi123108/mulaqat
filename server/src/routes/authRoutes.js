@@ -2,37 +2,130 @@ const express = require("express");
 const jwt = require("jsonwebtoken");
 const passport = require("../config/passport");
 
+const uploadAvatar = require("../middleware/uploadAvatar");
+
 const {
   registerUser,
   loginUser,
   getCurrentUser,
   forgotPassword,
   resetPassword,
+
+  updateProfile,
+  updateProfilePhoto,
+  useGoogleProfilePhoto,
+
+  sendEmailChangeOtp,
+  verifyEmailChangeOtp,
+
+  changePassword,
+
+  deleteAccount,
 } = require("../controllers/authController");
 
 const protect = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// ==============================
-// LOCAL AUTHENTICATION
-// ==============================
+// ========================================
+// AUTH
+// ========================================
 
-router.post("/register", registerUser);
+router.post(
+  "/register",
+  registerUser
+);
 
-router.post("/login", loginUser);
+router.post(
+  "/login",
+  loginUser
+);
 
-router.get("/me", protect, getCurrentUser);
+router.get(
+  "/me",
+  protect,
+  getCurrentUser
+);
 
-router.post("/forgot-password", forgotPassword);
+// ========================================
+// PROFILE
+// ========================================
 
-router.post("/reset-password/:token", resetPassword);
+router.patch(
+  "/profile",
+  protect,
+  updateProfile
+);
 
-// ==============================
-// GOOGLE AUTHENTICATION
-// ==============================
+// Upload custom profile picture
+router.patch(
+  "/profile/photo",
+  protect,
+  uploadAvatar.single("avatar"),
+  updateProfilePhoto
+);
 
-// Start Google OAuth
+// Restore/use Google profile picture
+router.post(
+  "/profile/use-google-photo",
+  protect,
+  useGoogleProfilePhoto
+);
+
+// ========================================
+// CHANGE EMAIL
+// ========================================
+
+router.post(
+  "/change-email/send-otp",
+  protect,
+  sendEmailChangeOtp
+);
+
+router.post(
+  "/change-email/verify-otp",
+  protect,
+  verifyEmailChangeOtp
+);
+
+// ========================================
+// CHANGE PASSWORD
+// ========================================
+
+router.post(
+  "/change-password",
+  protect,
+  changePassword
+);
+
+// ========================================
+// DELETE ACCOUNT
+// ========================================
+
+router.delete(
+  "/delete-account",
+  protect,
+  deleteAccount
+);
+
+// ========================================
+// FORGOT PASSWORD
+// ========================================
+
+router.post(
+  "/forgot-password",
+  forgotPassword
+);
+
+router.post(
+  "/reset-password/:token",
+  resetPassword
+);
+
+// ========================================
+// GOOGLE AUTH
+// ========================================
+
 router.get(
   "/google",
   passport.authenticate("google", {
@@ -40,7 +133,6 @@ router.get(
   })
 );
 
-// Google OAuth callback
 router.get(
   "/google/callback",
   passport.authenticate("google", {
@@ -64,7 +156,9 @@ router.get(
         id: req.user._id,
         name: req.user.name,
         email: req.user.email,
-        avatar: req.user.avatar,
+        avatar: req.user.avatar || "",
+        googleAvatar:
+          req.user.googleAvatar || "",
       };
 
       const params = new URLSearchParams({
@@ -76,7 +170,10 @@ router.get(
         `http://localhost:5173/auth/google/callback?${params.toString()}`
       );
     } catch (error) {
-      console.error("Google JWT error:", error);
+      console.error(
+        "Google JWT error:",
+        error
+      );
 
       return res.redirect(
         "http://localhost:5173/login?error=google_auth_failed"

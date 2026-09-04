@@ -40,6 +40,11 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
+    googleAvatar: {
+  type: String,
+  default: "",
+},
+
     resetPasswordToken: {
       type: String,
       default: null,
@@ -49,6 +54,22 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
+    emailChangeOtp: {
+  type: String,
+  default: null,
+},
+
+emailChangeOtpExpires: {
+  type: Date,
+  default: null,
+},
+
+pendingEmail: {
+  type: String,
+  default: null,
+},
+
   },
   {
     timestamps: true,

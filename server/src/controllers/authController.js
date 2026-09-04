@@ -132,7 +132,9 @@ const loginUser = async (req, res) => {
 // ==============================
 const getCurrentUser = async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select("-password");
+    const user = await User.findById(req.userId).select(
+      "-password -resetPasswordToken -resetPasswordExpires -emailChangeOtp"
+    );
 
     if (!user) {
       return res.status(404).json({
@@ -147,15 +149,20 @@ const getCurrentUser = async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        avatar: user.avatar,
+        avatar: user.avatar || "",
+        googleAvatar:
+          user.googleAvatar || "",
       },
     });
   } catch (error) {
-    console.error("Get current user error:", error);
+    console.error(
+      "Get current user error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      message: "Server error",
+      message: "Unable to get current user",
     });
   }
 };
@@ -299,6 +306,519 @@ const resetPassword = async (req, res) => {
 };
 
 // ==============================
+// UPDATE PROFILE
+// ==============================
+const updateProfile = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required",
+      });
+    }
+
+    const trimmedName = name.trim();
+
+    if (trimmedName.length < 2) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name must be at least 2 characters",
+      });
+    }
+
+    if (trimmedName.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name cannot exceed 50 characters",
+      });
+    }
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    user.name = trimmedName;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar || "",
+        googleAvatar:
+          user.googleAvatar || "",
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Update profile error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to update profile",
+    });
+  }
+};
+
+
+// ==============================
+// SEND EMAIL CHANGE OTP
+// ==============================
+const sendEmailChangeOtp = async (req, res) => {
+  try {
+    const { newEmail } = req.body;
+
+    if (!newEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "New email is required",
+      });
+    }
+
+    const normalizedEmail = newEmail.toLowerCase().trim();
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (normalizedEmail === user.email) {
+      return res.status(400).json({
+        success: false,
+        message: "New email must be different from your current email",
+      });
+    }
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      _id: { $ne: user._id },
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered",
+      });
+    }
+
+    // Generate 6-digit OTP
+    const otp = crypto.randomInt(100000, 1000000).toString();
+
+    // Store only hashed OTP
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
+
+    user.emailChangeOtp = hashedOtp;
+    user.emailChangeOtpExpires = new Date(
+      Date.now() + 10 * 60 * 1000
+    );
+    user.pendingEmail = normalizedEmail;
+
+    await user.save();
+
+    // Temporary development logging.
+    // Remove this before production.
+    console.log(
+      `Email change OTP for ${normalizedEmail}: ${otp}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully",
+    });
+  } catch (error) {
+    console.error("Send email change OTP error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to send OTP",
+    });
+  }
+};
+
+
+// ==============================
+// VERIFY EMAIL CHANGE OTP
+// ==============================
+const verifyEmailChangeOtp = async (req, res) => {
+  try {
+    const { otp } = req.body;
+
+    if (!otp) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP is required",
+      });
+    }
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (
+      !user.emailChangeOtp ||
+      !user.emailChangeOtpExpires ||
+      !user.pendingEmail
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No email change request found",
+      });
+    }
+
+    if (user.emailChangeOtpExpires < new Date()) {
+      user.emailChangeOtp = null;
+      user.emailChangeOtpExpires = null;
+      user.pendingEmail = null;
+
+      await user.save();
+
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired",
+      });
+    }
+
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp.toString())
+      .digest("hex");
+
+    if (hashedOtp !== user.emailChangeOtp) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    const existingUser = await User.findOne({
+      email: user.pendingEmail,
+      _id: { $ne: user._id },
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "This email is already registered",
+      });
+    }
+
+    user.email = user.pendingEmail;
+
+    user.emailChangeOtp = null;
+    user.emailChangeOtpExpires = null;
+    user.pendingEmail = null;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Email updated successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+      },
+    });
+  } catch (error) {
+    console.error("Verify email OTP error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to verify OTP",
+    });
+  }
+};
+
+
+// ==============================
+// CHANGE PASSWORD
+// ==============================
+const changePassword = async (req, res) => {
+  try {
+    const {
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    } = req.body;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "All password fields are required",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New passwords do not match",
+      });
+    }
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Google users may not have a local password
+    if (!user.password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password change is not available for Google accounts",
+      });
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword,
+      user.password
+    );
+
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    const isSamePassword = await bcrypt.compare(
+      newPassword,
+      user.password
+    );
+
+    if (isSamePassword) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "New password must be different from current password",
+      });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 12);
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (error) {
+    console.error("Change password error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to change password",
+    });
+  }
+};
+
+
+// ==============================
+// DELETE ACCOUNT
+// ==============================
+const deleteAccount = async (req, res) => {
+  try {
+    const { password } = req.body;
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Local account
+    if (user.password) {
+      if (!password) {
+        return res.status(400).json({
+          success: false,
+          message: "Password is required",
+        });
+      }
+
+      const isPasswordValid = await bcrypt.compare(
+        password,
+        user.password
+      );
+
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Incorrect password",
+        });
+      }
+    }
+
+    await User.findByIdAndDelete(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Account deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete account error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to delete account",
+    });
+  }
+};
+
+//Upadte Profile photo
+
+const updateProfilePhoto = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please select a profile picture",
+      });
+    }
+
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const avatarUrl =
+      `/uploads/avatars/${req.file.filename}`;
+
+    user.avatar = avatarUrl;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Profile picture updated successfully",
+
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        googleAvatar:
+          user.googleAvatar || "",
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Profile photo update error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to update profile picture",
+    });
+  }
+};
+
+//Google profile
+
+const useGoogleProfilePhoto = async (
+  req,
+  res
+) => {
+  try {
+    const user = await User.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.googleAvatar) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "No Google profile picture is available for this account",
+      });
+    }
+
+    user.avatar = user.googleAvatar;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Google profile picture applied successfully",
+
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar,
+        googleAvatar:
+          user.googleAvatar,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "Google profile photo error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to use Google profile picture",
+    });
+  }
+};
+
+// ==============================
 // EXPORTS
 // ==============================
 module.exports = {
@@ -307,4 +827,11 @@ module.exports = {
   getCurrentUser,
   forgotPassword,
   resetPassword,
+  updateProfile,
+  sendEmailChangeOtp,
+  verifyEmailChangeOtp,
+  changePassword,
+  deleteAccount,
+  updateProfilePhoto,
+  useGoogleProfilePhoto,
 };
