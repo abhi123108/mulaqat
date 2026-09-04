@@ -215,7 +215,14 @@ const forgotPassword = async (req, res) => {
     await user.save();
 
     // Create reset link using the RAW token.
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${resetToken}`;
+    if (!process.env.FRONTEND_URL) {
+  throw new Error(
+    "FRONTEND_URL is not configured"
+  );
+}
+
+const resetUrl =
+  `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
     // Send reset email.
     await sendPasswordResetEmail(user.email, resetUrl);
