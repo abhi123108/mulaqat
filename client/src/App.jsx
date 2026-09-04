@@ -2,6 +2,7 @@ import {
   BrowserRouter,
   Routes,
   Route,
+  Navigate,
 } from "react-router-dom";
 
 import Register from "./pages/Register";
@@ -14,15 +15,35 @@ import GoogleCallback from "./pages/GoogleCallback";
 import History from "./pages/History";
 import Settings from "./pages/Settings";
 
+
+// Protect routes that require authentication
+function ProtectedRoute({ children }) {
+  const token = localStorage.getItem("mulaqat_token");
+
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
+
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
+
+        {/* Protected Home */}
         <Route
           path="/"
-          element={<Home />}
+          element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          }
         />
 
+        {/* Public routes */}
         <Route
           path="/register"
           element={<Register />}
@@ -31,16 +52,6 @@ function App() {
         <Route
           path="/login"
           element={<Login />}
-        />
-
-        <Route
-          path="/meeting/:meetingId"
-          element={<Meeting />}
-        />
-
-        <Route
-          path="/history"
-          element={<History />}
         />
 
         <Route
@@ -58,8 +69,42 @@ function App() {
           element={<GoogleCallback />}
         />
 
-        <Route path="/settings" element={<Settings />} />
-        
+        {/* Protected meeting */}
+        <Route
+          path="/meeting/:meetingId"
+          element={
+            <ProtectedRoute>
+              <Meeting />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected history */}
+        <Route
+          path="/history"
+          element={
+            <ProtectedRoute>
+              <History />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Protected settings */}
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Unknown routes */}
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+
       </Routes>
     </BrowserRouter>
   );
