@@ -8,10 +8,8 @@ passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret:
-        process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL:
-        process.env.GOOGLE_CALLBACK_URL,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: process.env.GOOGLE_CALLBACK_URL,
     },
 
     async (
@@ -26,7 +24,7 @@ passport.use(
         // ========================================
 
         const email =
-          profile.emails?.[0]?.value;
+          profile.emails?.[0]?.value?.trim();
 
         if (!email) {
           return done(
@@ -41,98 +39,117 @@ passport.use(
           email.toLowerCase();
 
         // ========================================
-        // GOOGLE PROFILE PHOTO
+        // GOOGLE PROFILE DATA
         // ========================================
+
+        const googleId = profile.id;
 
         const googleAvatar =
           profile.photos?.[0]?.value || "";
 
+        const googleName =
+          profile.displayName?.trim() ||
+          "Mulaqat User";
+
         // ========================================
-        // FIND EXISTING USER
+        // STEP 1
+        // Find user by Google ID
         // ========================================
 
         let user = await User.findOne({
-          $or: [
-            {
-              googleId: profile.id,
-            },
-            {
-              email: normalizedEmail,
-            },
-          ],
+          googleId: googleId,
         });
 
-        // ========================================
-        // CREATE NEW GOOGLE USER
-        // ========================================
+        if (user) {
+          // Update latest Google information
 
-        if (!user) {
-          user = await User.create({
-            name:
-              profile.displayName ||
-              "Mulaqat User",
+          user.googleAvatar = googleAvatar;
 
-            email: normalizedEmail,
-
-            password: null,
-
-            authProvider: "google",
-
-            googleId: profile.id,
-
-            // Current active avatar
-            avatar: googleAvatar,
-
-            // Permanent Google avatar
-            googleAvatar: googleAvatar,
-          });
-        }
-
-        // ========================================
-        // EXISTING USER
-        // ========================================
-
-        else {
-          user.googleId = profile.id;
-
-          user.authProvider = "google";
-
-          if (profile.displayName) {
-            user.name =
-              profile.displayName;
+          // Only use Google photo if user
+          // doesn't have a custom uploaded photo
+          if (!user.avatar && googleAvatar) {
+            user.avatar = googleAvatar;
           }
 
-          // ----------------------------------------
-          // Always preserve latest Google photo
-          // ----------------------------------------
-
-          if (googleAvatar) {
-            user.googleAvatar =
-              googleAvatar;
-          }
-
-          // ----------------------------------------
-          // IMPORTANT:
-          // Don't overwrite custom uploaded photo.
-          //
-          // If avatar is empty, use Google photo.
-          // Otherwise keep the user's custom photo.
-          // ----------------------------------------
-
-          if (
-            !user.avatar &&
-            googleAvatar
-          ) {
-            user.avatar =
-              googleAvatar;
+          if (googleName) {
+            user.name = googleName;
           }
 
           await user.save();
+
+          return done(null, user);
         }
 
         // ========================================
-        // PASSPORT SUCCESS
+        // STEP 2
+        // Find user by EMAIL
+        //
+        // This is important:
+        // Google account + existing local account
+        // with same email = SAME USER
         // ========================================
+
+        user = await User.findOne({
+          email: normalizedEmail,
+        });
+
+        if (user) {
+          // Link Google account to existing account
+
+          user.googleId = googleId;
+
+          user.googleAvatar = googleAvatar;
+
+          // Keep existing uploaded profile photo
+          if (!user.avatar && googleAvatar) {
+            user.avatar = googleAvatar;
+          }
+
+          // If this account has no password,
+          // treat it as Google account.
+          if (!user.password) {
+            user.authProvider = "google";
+          }
+
+          // Update name only if needed
+          if (!user.name && googleName) {
+            user.name = googleName;
+          }
+
+          await user.save();
+
+          console.log(
+            `Google account linked with existing user: ${normalizedEmail}`
+          );
+
+          return done(null, user);
+        }
+
+        // ========================================
+        // STEP 3
+        // No Google ID + No email match
+        // Create NEW Google user
+        // ========================================
+
+        user = await User.create({
+          name: googleName,
+
+          email: normalizedEmail,
+
+          password: null,
+
+          authProvider: "google",
+
+          googleId: googleId,
+
+          avatar: googleAvatar,
+
+          googleAvatar: googleAvatar,
+        });
+
+        console.log(
+          `New Google user created: ${normalizedEmail}`
+        );
 
         return done(null, user);
       } catch (error) {
