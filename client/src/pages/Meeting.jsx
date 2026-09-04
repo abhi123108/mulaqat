@@ -2620,7 +2620,6 @@ const Meeting = () => {
           gap: 10px;
         }
 
-        .chat-toggle,
         .leave-button,
         .control-button {
           border: 1px solid #334155;
@@ -2632,7 +2631,6 @@ const Meeting = () => {
           transition: 0.2s ease;
         }
 
-        .chat-toggle:hover,
         .control-button:hover {
           background: #334155;
         }
@@ -2733,6 +2731,8 @@ const Meeting = () => {
           display: flex;
           flex-direction: column;
           min-height: 0;
+          height: 100%;
+          max-height: 100%;
           background: #111827;
           border: 1px solid #1f2937;
           border-radius: 16px;
@@ -2768,13 +2768,14 @@ const Meeting = () => {
         }
 
         .chat-messages {
-          flex: 1;
-          min-height: 300px;
+          flex: 1 1 auto;
+          min-height: 0;
           overflow-y: auto;
           padding: 14px;
           display: flex;
           flex-direction: column;
           gap: 10px;
+          overscroll-behavior: contain;
         }
 
         .chat-empty {
@@ -2836,17 +2837,22 @@ const Meeting = () => {
         }
 
         .chat-compose {
+          flex: 0 0 auto;
           padding: 12px;
           border-top: 1px solid #1f2937;
+          background: #111827;
         }
 
         .chat-input-row {
           display: flex;
+          align-items: flex-end;
           gap: 8px;
+          min-width: 0;
         }
 
         .chat-input {
-          flex: 1;
+          flex: 1 1 auto;
+          min-width: 0;
           resize: none;
           min-height: 42px;
           max-height: 110px;
@@ -2856,6 +2862,8 @@ const Meeting = () => {
           border: 1px solid #334155;
           border-radius: 10px;
           outline: none;
+          font-size: 16px;
+          line-height: 1.35;
         }
 
         .chat-input:focus {
@@ -2931,7 +2939,9 @@ const Meeting = () => {
 
           .chat-panel {
             width: 100%;
-            height: 420px;
+            height: min(60vh, 520px);
+            min-height: 320px;
+            max-height: 520px;
           }
         }
 
@@ -2961,13 +2971,56 @@ const Meeting = () => {
           }
 
           .chat-panel {
-            height: 380px;
+            width: 100%;
+            height: min(62vh, 500px);
+            min-height: 320px;
+            max-height: 500px;
+            border-radius: 14px;
+          }
+
+          .chat-header {
+            flex: 0 0 auto;
+            padding: 13px;
+          }
+
+          .chat-messages {
+            flex: 1 1 auto;
+            min-height: 0;
+            padding: 12px;
+          }
+
+          .chat-compose {
+            flex: 0 0 auto;
+            padding: 10px;
+          }
+
+          .chat-input-row {
+            gap: 6px;
+          }
+
+          .chat-input {
+            min-width: 0;
+            min-height: 42px;
+            max-height: 96px;
+            font-size: 16px;
+          }
+
+          .send-button {
+            flex: 0 0 auto;
+            padding: 11px 13px;
+            min-height: 42px;
           }
 
           .chat-toggle,
-          .leave-button {
+          .leave-button,
+          .control-button {
             padding: 9px 11px;
             font-size: 12px;
+          }
+
+          .controls {
+            gap: 8px;
+            padding: 12px;
           }
         }
       `}</style>
@@ -3015,21 +3068,6 @@ const Meeting = () => {
             </div>
 
             <div className="header-actions">
-              <button
-                className="chat-toggle"
-                onClick={toggleChat}
-              >
-                💬 Chat
-
-                {unreadCount > 0 && (
-                  <span className="unread-badge">
-                    {unreadCount > 99
-                      ? "99+"
-                      : unreadCount}
-                  </span>
-                )}
-              </button>
-
               {isHost ? (
                 <button
                   className="leave-button"
