@@ -309,7 +309,7 @@ const Home = () => {
   const avatarUrl = userAvatar
     ? (userAvatar.startsWith("http") || userAvatar.startsWith("data:image/"))
       ? userAvatar
-      : `http://localhost:5000${userAvatar}`
+      : `${import.meta.env.VITE_BACKEND_URL}${userAvatar}`
     : "";
 
   // =====================================================

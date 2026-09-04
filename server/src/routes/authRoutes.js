@@ -138,7 +138,7 @@ router.get(
   passport.authenticate("google", {
     session: false,
     failureRedirect:
-      "http://localhost:5173/login?error=google_auth_failed",
+      `${process.env.FRONTEND_URL}/login?error=google_auth_failed`,
   }),
   (req, res) => {
     try {
@@ -167,7 +167,7 @@ router.get(
       });
 
       return res.redirect(
-        `http://localhost:5173/auth/google/callback?${params.toString()}`
+        `${process.env.FRONTEND_URL}/auth/google/callback?${params.toString()}`
       );
     } catch (error) {
       console.error(
@@ -176,7 +176,7 @@ router.get(
       );
 
       return res.redirect(
-        "http://localhost:5173/login?error=google_auth_failed"
+         `${process.env.FRONTEND_URL}/login?error=google_auth_failed`
       );
     }
   }

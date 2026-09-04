@@ -629,7 +629,7 @@ const Settings = () => {
   const displayAvatar = avatar
     ? avatar.startsWith("http")
       ? avatar
-      : `http://localhost:5000${avatar}`
+      : `${import.meta.env.VITE_BACKEND_URL}${avatar}`
     : "";
 
   // =========================

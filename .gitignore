@@ -23,5 +23,3 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 server/uploads/
-
-server/uploads/
