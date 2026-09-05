@@ -67,8 +67,10 @@ const RemoteVideo = ({ participant, isHost = false }) => {
       />
 
       <div className="video-label">
-        {isHost ? "Host" : "User"}{" "}
-        {!isHost &&
+        {participant.displayName || (isHost ? "Host" : "User")}
+        {participant.displayName && isHost ? " • Host" : ""}
+        {!participant.displayName &&
+          !isHost &&
           (participant.userId?.slice(-6) ||
             participant.socketId?.slice(-6))}
       </div>
@@ -113,6 +115,11 @@ const Meeting = () => {
 
   // socketId -> MediaStream
   const remoteStreamsRef = useRef(
+    new Map()
+  );
+
+  // socketId -> meeting display name
+  const participantNamesRef = useRef(
     new Map()
   );
 
@@ -165,6 +172,19 @@ const Meeting = () => {
     useState("");
 
   const [success, setSuccess] =
+    useState("");
+
+  // ====================================================
+  // JOIN NAME
+  // ====================================================
+
+  const [joinName, setJoinName] =
+    useState("");
+
+  const [joinNameConfirmed, setJoinNameConfirmed] =
+    useState(false);
+
+  const [joinNameError, setJoinNameError] =
     useState("");
 
   // ====================================================
@@ -298,6 +318,11 @@ const Meeting = () => {
                       userId:
                         userId ||
                         participant.userId,
+                      displayName:
+                        participant.displayName ||
+                        participantNamesRef.current.get(
+                          socketId
+                        ),
                       stream,
                     }
                   : participant
@@ -309,6 +334,10 @@ const Meeting = () => {
             {
               socketId,
               userId,
+              displayName:
+                participantNamesRef.current.get(
+                  socketId
+                ),
               stream,
             },
           ];
@@ -366,6 +395,10 @@ const Meeting = () => {
         socketId
       );
 
+      participantNamesRef.current.delete(
+        socketId
+      );
+
       removeParticipant(socketId);
     },
     [removeParticipant]
@@ -399,6 +432,107 @@ const Meeting = () => {
           new RTCPeerConnection(
             ICE_SERVERS
           );
+
+        // ==============================================
+        // DISPLAY NAME DATA CHANNEL
+        // ==============================================
+        // WebRTC carries the meeting display name directly between
+        // participants, so the backend does not need to persist it.
+        const sendDisplayName = (channel) => {
+          if (!channel) {
+            return;
+          }
+
+          const payload = JSON.stringify({
+            type: "display-name",
+            displayName: joinName,
+          });
+
+          const send = () => {
+            try {
+              if (channel.readyState === "open") {
+                channel.send(payload);
+              }
+            } catch (error) {
+              console.warn("Failed to send display name:", error);
+            }
+          };
+
+          if (channel.readyState === "open") {
+            send();
+          } else {
+            channel.addEventListener("open", send, { once: true });
+          }
+        };
+
+        const metadataChannel =
+          peerConnection.createDataChannel("mulaqat-metadata");
+
+        metadataChannel.onopen = () => {
+          sendDisplayName(metadataChannel);
+        };
+
+        metadataChannel.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data?.type !== "display-name" || !data.displayName) {
+              return;
+            }
+
+            participantNamesRef.current.set(
+              targetSocketId,
+              data.displayName.trim()
+            );
+
+            setParticipants((current) =>
+              current.map((participant) =>
+                participant.socketId === targetSocketId
+                  ? { ...participant, displayName: data.displayName.trim() }
+                  : participant
+              )
+            );
+          } catch (error) {
+            console.warn("Invalid participant metadata:", error);
+          }
+        };
+
+        peerConnection.ondatachannel = (event) => {
+          const channel = event.channel;
+
+          if (channel.label !== "mulaqat-metadata") {
+            return;
+          }
+
+          channel.onopen = () => {
+            sendDisplayName(channel);
+          };
+
+          channel.onmessage = (messageEvent) => {
+            try {
+              const data = JSON.parse(messageEvent.data);
+
+              if (data?.type !== "display-name" || !data.displayName) {
+                return;
+              }
+
+              participantNamesRef.current.set(
+                targetSocketId,
+                data.displayName.trim()
+              );
+
+              setParticipants((current) =>
+                current.map((participant) =>
+                  participant.socketId === targetSocketId
+                    ? { ...participant, displayName: data.displayName.trim() }
+                    : participant
+                )
+              );
+            } catch (error) {
+              console.warn("Invalid participant metadata:", error);
+            }
+          };
+        };
 
         // ==============================================
         // ADD LOCAL CAMERA + MICROPHONE TRACKS
@@ -546,6 +680,7 @@ const Meeting = () => {
       [
         updateParticipantStream,
         cleanupPeer,
+        joinName,
       ]
     );
 
@@ -1230,6 +1365,10 @@ const Meeting = () => {
             return;
           }
 
+          if (!joinNameConfirmed) {
+            return;
+          }
+
           // ============================================
           // CAMERA
           // ============================================
@@ -1302,6 +1441,7 @@ const Meeting = () => {
                 "join-room",
                 {
                   meetingId,
+                  displayName: joinName,
                 }
               );
             };
@@ -1680,6 +1820,8 @@ const Meeting = () => {
   }, [
     meetingId,
     navigate,
+    joinNameConfirmed,
+    joinName,
     startLocalMedia,
     createOffer,
     handleOffer,
@@ -2204,8 +2346,53 @@ const Meeting = () => {
 }
 
   // ====================================================
+  // CONFIRM JOIN NAME
+  // ====================================================
+
+  const confirmJoinName = () => {
+    const normalizedName = joinName.trim();
+
+    if (!normalizedName) {
+      setJoinNameError("Please enter your name.");
+      return;
+    }
+
+    if (normalizedName.length < 2) {
+      setJoinNameError("Name must be at least 2 characters.");
+      return;
+    }
+
+    if (normalizedName.length > 40) {
+      setJoinNameError("Name must be 40 characters or less.");
+      return;
+    }
+
+    setJoinNameError("");
+    setJoinName(normalizedName);
+    setJoinNameConfirmed(true);
+  };
+
+  // ====================================================
   // LOADING
   // ====================================================
+
+  if (meeting && !joinNameConfirmed && !meetingEnded && !error) {
+    return (
+      <div className="meeting-state">
+        <div style={{ width: "min(92vw, 460px)", padding: "34px", borderRadius: "20px", background: "rgba(15, 23, 42, 0.96)", border: "1px solid rgba(96, 165, 250, 0.18)", boxShadow: "0 24px 80px rgba(0,0,0,0.45)" }}>
+          <div style={{ width: "52px", height: "52px", display: "grid", placeItems: "center", marginBottom: "20px", borderRadius: "14px", background: "rgba(59,130,246,0.12)", border: "1px solid rgba(96,165,250,0.18)", fontSize: "22px" }}>👤</div>
+          <div style={{ color: "#64748b", fontSize: "11px", fontWeight: "700", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "8px" }}>Join meeting</div>
+          <h1 style={{ margin: "0 0 10px", color: "#f8fafc", fontSize: "28px", lineHeight: "1.2" }}>What should we call you?</h1>
+          <p style={{ margin: "0 0 24px", color: "#94a3b8", fontSize: "14px", lineHeight: "1.6" }}>Enter the name you want other participants to see in this meeting.</p>
+          <label style={{ display: "block", marginBottom: "8px", color: "#cbd5e1", fontSize: "12px", fontWeight: "700" }}>Your name</label>
+          <input autoFocus value={joinName} onChange={(event) => { setJoinName(event.target.value); if (joinNameError) setJoinNameError(""); }} onKeyDown={(event) => { if (event.key === "Enter") confirmJoinName(); }} placeholder="Enter your name" maxLength={40} style={{ width: "100%", padding: "14px 15px", borderRadius: "12px", border: joinNameError ? "1px solid rgba(248,113,113,0.7)" : "1px solid rgba(148,163,184,0.16)", background: "rgba(30,41,59,0.85)", color: "#f8fafc", outline: "none", fontSize: "16px" }} />
+          {joinNameError && <p style={{ margin: "8px 0 0", color: "#f87171", fontSize: "12px" }}>{joinNameError}</p>}
+          <button type="button" onClick={confirmJoinName} style={{ width: "100%", marginTop: "18px", padding: "14px 18px", border: "none", borderRadius: "12px", background: "linear-gradient(135deg, #3b82f6, #6366f1)", color: "white", fontSize: "14px", fontWeight: "750", cursor: "pointer" }}>Continue to meeting →</button>
+          <div style={{ marginTop: "18px", color: "#475569", fontSize: "11px", textAlign: "center" }}>Meeting ID: {meetingId}</div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
   return (
@@ -3123,11 +3310,11 @@ const Meeting = () => {
                   <div className="video-label">
                     {screenSharing
                       ? isHost
-                        ? "You • Host • Screen"
-                        : "You • Screen"
+                        ? `${joinName} • Host • Screen`
+                        : `${joinName} • Screen`
                       : isHost
-                        ? "You • Host"
-                        : "You"}
+                        ? `${joinName} • Host`
+                        : joinName}
                   </div>
                 </div>
 
